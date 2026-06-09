@@ -22,26 +22,26 @@ Instead of browsing multiple websites and communities, users can view active giv
 
 ## Features
 
-### 🎁 Giveaway Feed
+###  Giveaway Feed
 Browse active giveaways from multiple sources in a unified, beautifully styled feed featuring platform-specific color coding.
 
-### 🔍 Rich Game Metadata
+###  Rich Game Metadata
 Enriches posts with additional data automatically fetched in the background:
 - Original prices and current discounts
 - Game descriptions, developer info, and genres
 - Achievements and trading card availability
 - SteamDB ratings and review scores
 
-### ⏳ Expiry Tracking
+###  Expiry Tracking
 Indicates whether giveaways are still live or expired, calculating exact ending times and displaying real-time countdown labels.
 
-### 🔔 Smart Background Notifications
+###  Smart Background Notifications
 Checks for new giveaways periodically in the background (runs task every 15, 30, or 60 minutes) and delivers local notifications with a custom notification channel and sound.
 
-### 🛡️ NSFW Filter & Gate
+###  NSFW Filter & Gate
 Safe browsing support with blur filters on NSFW game thumbnails and a verification gate before revealing adult-only content.
 
-### 🎒 Personal Vault
+###  Personal Vault
 A persistent inventory card system where you can track your claimed games or watch-list upcoming giveaways.
 
 ---
