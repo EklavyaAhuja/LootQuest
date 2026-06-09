@@ -132,7 +132,7 @@ Have feedback, suggestions, or bug reports?
 
 Join the Discord server:
 
-[Discord Invite]((https://discord.gg/pXxnhKWdGH))
+[Discord Invite](https://discord.gg/pXxnhKWdGH)
 
 ## Disclaimer
 
