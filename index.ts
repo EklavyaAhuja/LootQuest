@@ -1,4 +1,6 @@
 import { registerRootComponent } from 'expo';
+// expo-insights activates automatically on import for EAS Insights analytics
+import 'expo-insights';
 
 import App from './App';
 

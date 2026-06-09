@@ -1,25 +1,44 @@
 {
   "expo": {
-    "name": "FreeGameFindings_App",
+    "name": "LootQuest",
     "slug": "FreeGameFindings_App",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/Icon_Latest.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true
     },
     "android": {
+      "package": "com.freegamefindings.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#0B101E",
+        "foregroundImage": "./assets/Icon_Latest.png"
       },
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-secure-store",
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/Icon_Latest.png",
+          "color": "#FFA8A8",
+          "sounds": [
+            "./assets/long_expected.mp3"
+          ]
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "95a4c213-070b-4462-8489-b8d0c433e77b"
+      }
     }
   }
 }
