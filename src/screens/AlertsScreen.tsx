@@ -60,15 +60,16 @@ const RadarAnimation = () => {
       <Animated.View style={[styles.radarSweep, { transform: [{ rotate }] }]}>
         <Svg width={90} height={90}>
           <Defs>
-            {/* Gradient from top-middle to left-middle */}
-            <LinearGradient id="sweepGrad" x1="0.5" y1="0" x2="0" y2="0.5">
-              <Stop offset="0%" stopColor="seagreen" stopOpacity="0.65" />
+            {/* Symmetrical gradient from left edge to center to right edge */}
+            <LinearGradient id="sweepGrad" x1="0" y1="0" x2="1" y2="0">
+              <Stop offset="0%" stopColor="seagreen" stopOpacity="0.0" />
+              <Stop offset="50%" stopColor="seagreen" stopOpacity="0.65" />
               <Stop offset="100%" stopColor="seagreen" stopOpacity="0.0" />
             </LinearGradient>
           </Defs>
-          {/* 90-degree quadrant trailing the sweep line */}
-          <Path d="M 45 45 L 45 1 A 44 44 0 0 0 1 45 Z" fill="url(#sweepGrad)" />
-          {/* Dashed sweep line (white/light-grey) */}
+          {/* Symmetrical 90-degree sector centered around the dashed line */}
+          <Path d="M 45 45 L 13.9 13.9 A 44 44 0 0 1 76.1 13.9 Z" fill="url(#sweepGrad)" />
+          {/* Dashed sweep line (white/light-grey) directly in the middle */}
           <Line x1={45} y1={45} x2={45} y2={1} stroke="#ffffff" strokeWidth={1} strokeDasharray="2, 2" />
         </Svg>
       </Animated.View>
