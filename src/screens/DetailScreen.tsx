@@ -21,11 +21,14 @@ import { expiredFeedService } from '../services/ExpiredFeedService';
 import { tasksFeedService } from '../services/TasksFeedService';
 import { enrichEpicDeal } from '../services/EpicGamesEnricher';
 import { addClaimedPost, getClaimedPosts } from '../services/storageService';
+import { dealEnrichmentService } from '../services/DealEnrichmentService';
 import { fetchImageFromUrl } from '../utils/imageResolver';
 import { COLORS, FONTS } from '../theme/theme';
 import BouncyPressable from '../components/BouncyPressable';
 import * as WebBrowser from 'expo-web-browser';
+import { isDealClaimed, getTimeLeft } from '../utils/dealUtils';
 import Svg, { Path } from 'react-native-svg';
+import StoreIcon from '../components/StoreIcon';
 import {
   ArrowLeft,
   Terminal,
@@ -35,6 +38,13 @@ import {
   Layers,
   Tag,
   Check,
+  Clock,
+  User,
+  Plus,
+  Monitor,
+  Gamepad,
+  Smartphone,
+  Globe,
 } from 'lucide-react-native';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -46,12 +56,28 @@ interface DetailScreenProps {
   onClose: () => void;
 }
 
+const parseInstructionsIntoSteps = (text: string) => {
+  if (!text) return [];
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  return lines.map((line, idx) => {
+    const cleanLine = line.replace(/^\d+[\.\)\s-]+\s*/, '');
+    return {
+      number: idx + 1,
+      text: cleanLine,
+    };
+  });
+};
+
 const COVER_IMAGES = [
   'https://images.unsplash.com/photo-1538481199705-c710c4e965fc?auto=format&fit=crop&w=600&q=80',
   'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=600&q=80',
   'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=600&q=80',
   'https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=600&q=80',
 ];
+
+const getPlatformIcon = (platform: string) => {
+  return <StoreIcon platform={platform} size={14} color="#ffffff" style={{ marginRight: 6 }} />;
+};
 
 export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
   const [localDeal, setLocalDeal] = useState<Deal>(deal);
@@ -61,6 +87,37 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
   
   // Interactive CTA state: 'idle' | 'claiming' | 'claimed'
   const [claimState, setClaimState] = useState<'idle' | 'claiming' | 'claimed'>('idle');
+
+  const [timeLeft, setTimeLeft] = useState<string>(deal.timeLeft || 'No expiry');
+  const [isExpired, setIsExpired] = useState<boolean>(
+    deal.isExpired || deal.expiryStatus === 'EXPIRED'
+  );
+  const [showExactExpiry, setShowExactExpiry] = useState(false);
+
+  useEffect(() => {
+    const updateTime = () => {
+      const end = localDeal.expiresAt || localDeal.endDate;
+      setTimeLeft(getTimeLeft(end));
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 10000);
+    return () => clearInterval(interval);
+  }, [localDeal.expiresAt, localDeal.endDate]);
+
+  useEffect(() => {
+    const checkExpiry = () => {
+      const end = localDeal.expiresAt || localDeal.endDate;
+      if (end && end.toUpperCase() !== 'N/A') {
+        const endTime = new Date(end).getTime();
+        setIsExpired(endTime < Date.now());
+      } else {
+        setIsExpired(localDeal.isExpired || localDeal.expiryStatus === 'EXPIRED');
+      }
+    };
+    checkExpiry();
+    const interval = setInterval(checkExpiry, 10000);
+    return () => clearInterval(interval);
+  }, [localDeal.expiresAt, localDeal.endDate, localDeal.isExpired, localDeal.expiryStatus]);
 
   // Animated width for progress bar
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -101,7 +158,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
         // 1. Check claimed status
         const claimed = await getClaimedPosts();
         if (active) {
-          const isClaimed = claimed.some(p => p.id === deal.id);
+          const isClaimed = isDealClaimed(deal, claimed as any);
           setClaimState(isClaimed ? 'claimed' : 'idle');
         }
 
@@ -111,12 +168,16 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
           if (active) {
             const isExpiredFromFlair = expiredFeedService.isExpired(deal.id);
             const isTaskFromFlair = tasksFeedService.isTask(deal.id);
-            setLocalDeal({
+            const cachedMerged = {
               ...deal,
               ...cached,
+              platform: deal.platform,
               expiryStatus: isExpiredFromFlair ? 'EXPIRED' : cached.expiryStatus,
               claimMethod: isTaskFromFlair ? 'tasks' : (cached.claimMethod || deal.claimMethod)
-            });
+            };
+            cachedMerged.timeLeft = getTimeLeft(cachedMerged.expiresAt || cachedMerged.endDate);
+            setLocalDeal(cachedMerged);
+            dealEnrichmentService.notify(cachedMerged);
           }
           return;
         }
@@ -152,7 +213,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               }
             }
 
-            const finalExpiresAt = epicData?.expiresAt || expiresAt;
+            const finalExpiresAt = epicData?.expiresAt || expiresAt || deal.expiresAt;
 
             let resolvedImage = epicData?.image || deal.image;
             if (!resolvedImage && parsed.storeUrl) {
@@ -167,7 +228,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               originalPrice: parsed.originalPrice || undefined,
               currentPrice: parsed.price || undefined,
               expiresAt: finalExpiresAt,
-              expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : 'UNKNOWN'),
+              expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
               claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
               developer: epicData?.developer || parsed.developer || undefined,
               releaseDate: parsed.releaseDate || undefined,
@@ -180,11 +241,13 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               instructions: parsed.instructions || undefined,
               parserConfidence: parsed.parserConfidence,
               image: resolvedImage,
-              url: epicData?.url || deal.url,
+              url: epicData?.url || parsed.storeUrl || deal.url,
+              timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
             };
 
             await saveCachedDeal(deal.id, enriched, botComment);
             if (active) setLocalDeal(enriched);
+            dealEnrichmentService.notify(enriched);
           } else {
             // No bot comment found: fallback to post body and flair status
             const isExpiredFromFlair = expiredFeedService.isExpired(deal.id);
@@ -192,7 +255,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
             const isFree = checkIsFullyFree(deal.title, deal.description);
             const postBodyExpiry = isFree ? (parseExpiryFromPostBody(deal.description) || undefined) : undefined;
             
-            const finalExpiresAt = epicData?.expiresAt || postBodyExpiry;
+            const finalExpiresAt = epicData?.expiresAt || postBodyExpiry || deal.expiresAt;
 
             let resolvedImage = epicData?.image || deal.image;
             if (!resolvedImage) {
@@ -202,15 +265,17 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
             const enriched: Deal = {
               ...deal,
               expiresAt: finalExpiresAt,
-              expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : 'UNKNOWN'),
+              expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
               claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
               developer: epicData?.developer || undefined,
               aboutGame: epicData?.description || undefined,
               image: resolvedImage,
               url: epicData?.url || deal.url,
+              timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
             };
             await saveCachedDeal(deal.id, enriched, '');
             if (active) setLocalDeal(enriched);
+            dealEnrichmentService.notify(enriched);
           }
         }
       } catch (e) {
@@ -236,7 +301,16 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
   }, [deal]);
 
   const handleClaim = async () => {
-    if (claimState !== 'idle') return;
+    if (claimState === 'claiming') return;
+
+    if (claimState === 'claimed') {
+      try {
+        WebBrowser.openBrowserAsync(localDeal.url);
+      } catch (e) {
+        console.error(e);
+      }
+      return;
+    }
 
     setClaimState('claiming');
     
@@ -246,8 +320,12 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
       console.error(e);
     }
 
-    // Save game to claimed posts collection in local storage (mock cast)
-    await addClaimedPost(localDeal as any);
+    // Save game to claimed posts collection in local storage if not already there
+    const claimed = await getClaimedPosts();
+    const alreadyClaimed = isDealClaimed(localDeal, claimed as any);
+    if (!alreadyClaimed) {
+      await addClaimedPost(localDeal as any);
+    }
 
     setTimeout(() => {
       setClaimState('claimed');
@@ -269,7 +347,26 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
       case 'dlc': return 'DLC';
       case 'beta': return 'Beta Access';
       case 'item': return 'In-Game Content';
+      case 'mobile_game': return 'Mobile Game';
+      case 'loot': return 'In-Game Loot';
       default: return 'Whole Game';
+    }
+  };
+
+  const getCompactExpiryDate = (isoString?: string | null) => {
+    if (!isoString) return '';
+    try {
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return '';
+      const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+      const month = months[d.getUTCMonth()];
+      const day = d.getUTCDate();
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      const hours = pad(d.getUTCHours());
+      const minutes = pad(d.getUTCMinutes());
+      return `${month} ${day}, ${hours}:${minutes} UTC`;
+    } catch {
+      return '';
     }
   };
 
@@ -292,8 +389,6 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
       return '';
     }
   };
-
-  const isExpired = localDeal.expiryStatus === 'EXPIRED';
 
   const isNsfwGame = deal.isNsfw || localDeal.isNsfw;
 
@@ -356,12 +451,12 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
 
   return (
     <View style={styles.container}>
-      {/* Top App Bar */}
+      {/* Top App Bar (Absolute & Transparent) */}
       <View style={styles.header}>
         <View style={styles.statusBarSpacer} />
         <View style={styles.headerContent}>
           <Pressable onPress={onClose} style={styles.backButton}>
-            <ArrowLeft size={22} color={COLORS.primary} />
+            <ArrowLeft size={22} color="#ffffff" />
           </Pressable>
 
           <View style={styles.headerTitleContainer}>
@@ -369,7 +464,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
           </View>
 
           <Pressable onPress={onClose} style={styles.settingsButton}>
-            <Settings size={22} color={COLORS.text} />
+            <Settings size={22} color="#ffffff" />
           </Pressable>
         </View>
       </View>
@@ -385,122 +480,134 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
           <View style={styles.heroOverlay} />
           
           <View style={styles.heroDetailsOverlay}>
-            {localDeal.genres && localDeal.genres.length > 0 ? (
-              <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-                {localDeal.genres.slice(0, 2).map((genre, idx) => (
-                  <View key={idx} style={styles.genreBadge}>
-                    <Text style={styles.genreBadgeText}>
-                      {genre.toUpperCase()}
-                    </Text>
-                  </View>
-                ))}
+            {/* Status Row */}
+            <View style={styles.heroStatusRow}>
+              <View style={styles.heroStatusPill}>
+                <View style={[styles.heroStatusDot, isExpired && { backgroundColor: COLORS.warning }]} />
+                <Text style={styles.heroStatusText}>
+                  {isExpired ? 'EXPIRED' : 'LIVE NOW'}
+                </Text>
               </View>
-            ) : null}
-            <View style={styles.titleRow}>
-              <Text style={styles.heroTitleText}>
-                {localDeal.title}
-              </Text>
-              <Pressable
-                onPress={handleOpenReddit}
-                style={styles.redditIconBtn}
-                accessibilityLabel="Open Reddit post"
-              >
-                <Svg width={20} height={20} viewBox="0 0 24 24" fill="#FF4500">
-                  <Path d="M24 11.5c0-1.65-1.35-3-3-3-.96 0-1.86.48-2.42 1.24-1.64-1-3.85-1.64-6.29-1.72l1.22-3.86 3.93.84c.02.93.79 1.68 1.73 1.68 1 0 1.8-.8 1.8-1.8s-.8-1.8-1.8-1.8c-.87 0-1.58.62-1.75 1.44l-4.3-.92c-.22-.05-.44.08-.51.3L11.02 8.16C8.54 8.24 6.3 8.88 4.63 9.9 4.07 9.14 3.17 8.66 2.2 8.66c-1.65 0-3 1.35-3 3 0 1.05.54 1.98 1.37 2.51-.07.44-.1.88-.1 1.33 0 4.69 5.37 8.5 12 8.5s12-3.81 12-8.5c0-.45-.03-.89-.1-1.33.83-.53 1.37-1.46 1.37-2.51zm-17.5 3c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm11.23 4.25c-.9 1-2.5 1.04-3.23 1.04s-2.33-.04-3.23-1.04c-.18-.2-.15-.5.05-.68.2-.18.5-.15.68.05.65.73 1.82.78 2.5.78s1.85-.05 2.5-.78c.18-.2.48-.23.68-.05.2.18.23.48.05.68zm-2.23-4.25c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z" />
-                </Svg>
-              </Pressable>
+              {timeLeft && timeLeft !== 'No expiry' && !isExpired && (
+                <Pressable
+                  onPress={() => {
+                    const end = localDeal.expiresAt || localDeal.endDate;
+                    if (end && end.toUpperCase() !== 'N/A') {
+                      setShowExactExpiry(!showExactExpiry);
+                    }
+                  }}
+                  style={styles.heroTimerPill}
+                >
+                  <Clock size={14} color={COLORS.secondary} />
+                  <Text style={styles.heroTimerText}>
+                    {showExactExpiry
+                      ? getCompactExpiryDate(localDeal.expiresAt || localDeal.endDate).toUpperCase()
+                      : timeLeft.toUpperCase()
+                    }
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+
+            {/* Badges Row */}
+            <View style={styles.heroBadgesRow}>
+              <View style={styles.heroBadge}>
+                {getPlatformIcon(localDeal.platform)}
+                <Text style={styles.heroBadgeText}>{localDeal.platform.toUpperCase()}</Text>
+              </View>
+              <View style={[styles.heroBadge, { borderColor: 'rgba(221, 183, 255, 0.3)' }]}>
+                <Text style={[styles.heroBadgeText, { color: COLORS.primary }]}>
+                  {getOfferDisplayType(localDeal.type).toUpperCase()}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.heroTitleText}>
+              {localDeal.title}
+            </Text>
+            
+            <Text style={styles.heroPublisherText}>
+              {localDeal.developer || 'Unknown Publisher'}
+            </Text>
+
+            {/* Stats Row */}
+            <View style={styles.heroStatsRow}>
+              <View style={styles.heroStatCol}>
+                <Text style={styles.heroStatLabel}>VALUE</Text>
+                <Text style={[styles.heroStatValue, { color: COLORS.success }]}>
+                  {localDeal.worth || 'FREE'}
+                </Text>
+              </View>
+              <View style={styles.heroStatDivider} />
+              <View style={styles.heroStatCol}>
+                <Text style={styles.heroStatLabel}>CLAIMED</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <User size={16} color={COLORS.textMuted} />
+                  <Text style={styles.heroStatValue}>
+                    {localDeal.claimedUsers ? localDeal.claimedUsers.toLocaleString() : '1,200'}
+                  </Text>
+                </View>
+              </View>
             </View>
           </View>
         </View>
 
-        {/* 2. Status Card */}
-        <View style={[styles.statusCard, isExpired && styles.statusCardExpired]}>
-          <View style={{ flex: 1, flexDirection: 'column' }}>
-            <Text style={[styles.statusLabelText, isExpired && { color: '#ff8888' }]}>
-              {isExpired ? '✗ Status: Expired' : '✓ Status: Not Expired'}
+        {/* 2. Bento Info Grid */}
+        <View style={styles.infoGrid}>
+          <View style={styles.infoCard}>
+            <Layers size={20} color={COLORS.textMuted} />
+            <Text style={styles.infoCardTitle}>DIFFICULTY</Text>
+            <Text style={styles.infoCardValue}>
+              {localDeal.claimMethod === 'one_click' ? 'One click' : (localDeal.claimMethod === 'tasks' ? 'Tasks' : 'Unknown')}
             </Text>
-            {localDeal.expiresAt ? (
-              <Text style={styles.statusExpiryText}>
-                {isExpired ? 'Expired: ' : 'Expires: '}{formatExpiryDate(localDeal.expiresAt)}
-              </Text>
-            ) : (
-              <Text style={styles.statusExpiryText}>
-                No expiry date specified
-              </Text>
-            )}
           </View>
-          <View style={[styles.liveBadge, isExpired && styles.liveBadgeExpired]}>
-            <Text style={styles.liveBadgeText}>
-              {isExpired ? 'EXPIRED' : 'LIVE'}
+          <View style={styles.infoCard}>
+            <Calendar size={20} color={COLORS.textMuted} />
+            <Text style={styles.infoCardTitle}>EXPIRY</Text>
+            <Text style={styles.infoCardValue}>
+              {localDeal.expiresAt ? formatExpiryDate(localDeal.expiresAt).replace(/ at.*/, '') : 'No Expiry'}
             </Text>
           </View>
         </View>
 
-        {/* 3. Stats Grid (2x2) */}
-        <View style={styles.statsGrid}>
-          <View style={styles.statsRow}>
-            {/* Card 1: Difficulty */}
-            <Pressable onPress={() => toggleStat('difficulty')} style={styles.statCard}>
-              <Layers size={18} color={COLORS.secondary} />
-              <View style={styles.statInfo}>
-                <Text style={styles.statLabel}>DIFFICULTY</Text>
-                <Text numberOfLines={expandedStats['difficulty'] ? undefined : 1} style={styles.statValue}>
-                  {localDeal.claimMethod === 'one_click' ? 'One click claim' : 'Tasks Required'}
-                </Text>
-              </View>
-            </Pressable>
-
-            {/* Card 2: Platform */}
-            <Pressable onPress={() => toggleStat('platform')} style={styles.statCard}>
-              <Terminal size={18} color={COLORS.secondary} />
-              <View style={styles.statInfo}>
-                <Text style={styles.statLabel}>PLATFORM</Text>
-                <Text numberOfLines={expandedStats['platform'] ? undefined : 1} style={styles.statValue}>
-                  {localDeal.platform}
-                </Text>
-              </View>
-            </Pressable>
-          </View>
-
-          <View style={styles.statsRow}>
-            {/* Card 3: Offer Type */}
-            <Pressable onPress={() => toggleStat('offer')} style={styles.statCard}>
-              <Tag size={18} color={COLORS.secondary} />
-              <View style={styles.statInfo}>
-                <Text style={styles.statLabel}>OFFER TYPE</Text>
-                <Text numberOfLines={expandedStats['offer'] ? undefined : 1} style={styles.statValue}>
-                  {localDeal.type === 'full_game' ? 'Full Game' : getOfferDisplayType(localDeal.type)}
-                </Text>
-              </View>
-            </Pressable>
-
-            {/* Card 4: Released */}
-            <Pressable onPress={() => toggleStat('released')} style={styles.statCard}>
-              <Calendar size={18} color={COLORS.secondary} />
-              <View style={styles.statInfo}>
-                <Text style={styles.statLabel}>RELEASED</Text>
-                <Text numberOfLines={expandedStats['released'] ? undefined : 1} style={styles.statValue}>
-                  {localDeal.releaseDate || 'Jan 2018'}
-                </Text>
-              </View>
-            </Pressable>
-          </View>
+        {/* 3. Description Section */}
+        <View style={styles.descriptionSection}>
+          <Text style={styles.descriptionHeader}>About this Loot</Text>
+          <Text style={styles.descriptionText}>
+            {localDeal.aboutGame || localDeal.description || 'No description available for this loot quest.'}
+          </Text>
         </View>
 
-        {/* 4. Description section */}
-        <Pressable onPress={toggleAboutExpanded} style={styles.descriptionSection}>
-          <Text style={styles.descriptionHeader}>
-            {localDeal.title ? `The ${localDeal.title.replace(/:.*/, '')} Quest` : 'The Quest'}
-          </Text>
-          <Text numberOfLines={isAboutExpanded ? undefined : 4} style={styles.descriptionText}>
-            {localDeal.aboutGame || localDeal.description || 'No description available.'}
-          </Text>
-        </Pressable>
+        {/* 4. Instructions Steps Timeline */}
+        {localDeal.instructions ? (() => {
+          const steps = parseInstructionsIntoSteps(localDeal.instructions);
+          if (steps.length === 0) return null;
+          return (
+            <View style={styles.timelineSection}>
+              <Text style={styles.descriptionHeader}>How to Claim</Text>
+              <View style={styles.timelineWrapper}>
+                <View style={styles.timelineVerticalLine} />
+                <View style={styles.timelineList}>
+                  {steps.map((step, index) => (
+                    <View key={index} style={styles.timelineItem}>
+                      <View style={styles.timelineStepCircle}>
+                        <Text style={styles.timelineStepNumber}>{step.number}</Text>
+                      </View>
+                      <View style={styles.timelineContent}>
+                        <Text style={styles.timelineStepText}>{step.text}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </View>
+          );
+        })() : null}
 
         {enriching && (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="small" color={COLORS.accent} />
-            <Text style={styles.enrichingText}>Checking comments for extra loot details...</Text>
+            <Text style={styles.enrichingText}>Enriching quest details...</Text>
           </View>
         )}
       </ScrollView>
@@ -510,13 +617,12 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
         {claimState === 'idle' && (
           <BouncyPressable
             onPress={handleClaim}
-            backgroundColor="#39ff14"
-            borderRadius={12}
+            backgroundColor={COLORS.primary}
+            borderRadius={28}
             shadowOffsetSize={0}
             style={styles.claimBtnMain}
             contentStyle={styles.claimBtnMainContent}
           >
-            <Check size={22} color="#0b101e" />
             <Text style={styles.claimBtnMainText}>CLAIM LOOT</Text>
           </BouncyPressable>
         )}
@@ -529,10 +635,16 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
         )}
 
         {claimState === 'claimed' && (
-          <View style={[styles.staticCtaState, styles.claimedState]}>
-            <Check size={22} color="#0b101e" />
-            <Text style={styles.staticCtaText}>CLAIMED!</Text>
-          </View>
+          <BouncyPressable
+            onPress={handleClaim}
+            backgroundColor={COLORS.success}
+            borderRadius={28}
+            shadowOffsetSize={0}
+            style={styles.claimBtnMain}
+            contentStyle={styles.claimBtnMainContent}
+          >
+            <Text style={[styles.claimBtnMainText, { color: COLORS.surfaceCharcoal }]}>CLAIMED!</Text>
+          </BouncyPressable>
         )}
       </View>
     </View>
@@ -545,36 +657,43 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg,
   },
   header: {
-    borderBottomWidth: 1,
-    borderColor: '#334155',
-    backgroundColor: COLORS.bg,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'transparent',
     zIndex: 50,
   },
   statusBarSpacer: {
-    height: Platform.OS === 'ios' ? 36 : 12,
+    height: Platform.OS === 'ios' ? 44 : 20,
   },
   headerContent: {
     height: 58,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
   },
   backButton: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(19, 19, 19, 0.4)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   settingsButton: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(19, 19, 19, 0.4)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerTitleContainer: {
     flex: 1,
     alignItems: 'center',
+    opacity: 0, // Keep title hidden to let hero title shine, but maintain layout
   },
   headerText: {
     fontFamily: FONTS.bold,
@@ -584,10 +703,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   scrollContent: {
-    paddingBottom: 130,
+    paddingBottom: 140,
   },
   heroSection: {
-    height: 300,
+    height: 480,
     width: '100%',
     position: 'relative',
   },
@@ -598,150 +717,213 @@ const styles = StyleSheet.create({
   },
   heroOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(11, 16, 30, 0.55)',
+    backgroundColor: 'rgba(19, 19, 19, 0.55)',
   },
   heroDetailsOverlay: {
     position: 'absolute',
-    bottom: 20,
-    left: 16,
-    right: 16,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 20,
+    paddingTop: 100,
+    backgroundColor: 'transparent',
   },
-  genreBadge: {
-    borderWidth: 1,
-    borderColor: '#39ff14',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    marginBottom: 8,
+  heroStatusRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
   },
-  genreBadgeText: {
-    fontFamily: FONTS.mono,
-    fontSize: 12,
-    color: '#39ff14',
-    letterSpacing: 0.5,
-  },
-  titleRow: {
+  heroStatusPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
+    gap: 6,
+    backgroundColor: 'rgba(34, 34, 34, 0.8)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  heroStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.success,
+  },
+  heroStatusText: {
+    fontFamily: FONTS.bold,
+    fontSize: 12,
+    color: '#ffffff',
+  },
+  heroTimerPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  heroTimerText: {
+    fontFamily: FONTS.mono,
+    fontSize: 12,
+    color: '#ffffff',
+    letterSpacing: 0.5,
+  },
+  heroBadgesRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  heroBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surfaceCharcoal,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  heroBadgeText: {
+    fontFamily: FONTS.bold,
+    fontSize: 10,
+    color: COLORS.text,
   },
   heroTitleText: {
     fontFamily: FONTS.bold,
-    fontSize: 26,
+    fontSize: 28,
     color: '#ffffff',
-    textShadowColor: '#000000',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
-    flex: 1,
-  },
-  redditIconBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    padding: 8,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-  },
-  statusCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#39ff14',
-    borderRadius: 12,
-    padding: 16,
-    marginHorizontal: 16,
-    marginVertical: 16,
-    backgroundColor: 'rgba(57, 255, 20, 0.05)',
-  },
-  statusCardExpired: {
-    borderColor: '#ff8888',
-    backgroundColor: 'rgba(255, 136, 136, 0.05)',
-  },
-  statusLabelText: {
-    fontFamily: FONTS.bold,
-    fontSize: 16,
-    color: '#39ff14',
-  },
-  statusExpiryText: {
-    fontFamily: FONTS.monoRegular,
-    fontSize: 13,
-    color: '#94a3b8',
-    marginTop: 6,
-  },
-  liveBadge: {
-    backgroundColor: '#39ff14',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  liveBadgeExpired: {
-    backgroundColor: '#ff8888',
-  },
-  liveBadgeText: {
-    fontFamily: FONTS.bold,
-    fontSize: 13,
-    color: '#0b101e',
-  },
-  statsGrid: {
-    gap: 12,
-    paddingHorizontal: 16,
-    marginBottom: 16,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 16,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  statInfo: {
-    flex: 1,
-  },
-  statLabel: {
-    fontFamily: FONTS.mono,
-    fontSize: 10,
-    color: '#64748b',
-    textTransform: 'uppercase',
+    lineHeight: 34,
     marginBottom: 4,
   },
-  statValue: {
+  heroPublisherText: {
+    fontFamily: FONTS.medium,
+    fontSize: 14,
+    color: COLORS.onSurfaceVariant,
+    marginBottom: 16,
+  },
+  heroStatsRow: {
+    flexDirection: 'row',
+    gap: 24,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    paddingTop: 16,
+  },
+  heroStatCol: {
+    flexDirection: 'column',
+  },
+  heroStatLabel: {
+    fontFamily: FONTS.bold,
+    fontSize: 10,
+    color: COLORS.textMuted,
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  heroStatValue: {
+    fontFamily: FONTS.bold,
+    fontSize: 18,
+    color: '#ffffff',
+  },
+  heroStatDivider: {
+    width: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  infoGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 20,
+    marginTop: 16,
+  },
+  infoCard: {
+    flex: 1,
+    backgroundColor: COLORS.surfaceCharcoal,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'flex-start',
+    gap: 4,
+  },
+  infoCardTitle: {
+    fontFamily: FONTS.bold,
+    fontSize: 10,
+    color: COLORS.textMuted,
+    letterSpacing: 0.5,
+  },
+  infoCardValue: {
     fontFamily: FONTS.bold,
     fontSize: 15,
-    color: COLORS.text,
+    color: COLORS.secondary,
   },
   descriptionSection: {
-    paddingHorizontal: 16,
-    marginVertical: 16,
+    paddingHorizontal: 20,
+    marginTop: 24,
   },
   descriptionHeader: {
     fontFamily: FONTS.bold,
-    fontSize: 19,
+    fontSize: 18,
     color: COLORS.text,
     marginBottom: 8,
   },
   descriptionText: {
     fontFamily: FONTS.medium,
     fontSize: 15,
-    color: '#94a3b8',
-    lineHeight: 23,
+    color: COLORS.onSurfaceVariant,
+    lineHeight: 22,
+  },
+  timelineSection: {
+    paddingHorizontal: 20,
+    marginTop: 24,
+  },
+  timelineWrapper: {
+    position: 'relative',
+    marginTop: 16,
+  },
+  timelineVerticalLine: {
+    position: 'absolute',
+    left: 19,
+    top: 20,
+    bottom: 20,
+    width: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderStyle: 'dashed',
+  },
+  timelineList: {
+    gap: 16,
+  },
+  timelineItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  timelineStepCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.surfaceHigh,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  timelineStepNumber: {
+    fontFamily: FONTS.bold,
+    fontSize: 14,
+    color: COLORS.primary,
+  },
+  timelineContent: {
+    flex: 1,
+  },
+  timelineStepText: {
+    fontFamily: FONTS.medium,
+    fontSize: 14,
+    color: COLORS.text,
   },
   loadingContainer: {
     flexDirection: 'row',
@@ -749,7 +931,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     marginTop: 16,
-    marginHorizontal: 16,
   },
   enrichingText: {
     fontFamily: FONTS.medium,
@@ -763,49 +944,45 @@ const styles = StyleSheet.create({
     right: 0,
     backgroundColor: COLORS.bg,
     borderTopWidth: 1,
-    borderColor: '#334155',
-    paddingHorizontal: 16,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+    paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: Platform.OS === 'ios' ? 32 : 20,
   },
   claimBtnMain: {
     width: '100%',
     height: 56,
-    justifyContent: 'center',
   },
   claimBtnMainContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
     height: 56,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   claimBtnMainText: {
-    fontFamily: FONTS.bold,
-    fontSize: 18,
-    color: '#0b101e',
-    letterSpacing: 1,
+    fontFamily: FONTS.extraBold,
+    fontSize: 16,
+    color: COLORS.bg,
+    letterSpacing: 0.5,
   },
   staticCtaState: {
     width: '100%',
     height: 56,
-    borderRadius: 12,
+    borderRadius: 28,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
   },
   claimingState: {
-    backgroundColor: '#334155',
+    backgroundColor: COLORS.surfaceHigh,
   },
   claimedState: {
-    backgroundColor: '#39ff14',
+    backgroundColor: COLORS.success,
   },
   staticCtaText: {
-    fontFamily: FONTS.bold,
-    fontSize: 18,
-    color: '#0b101e',
-    letterSpacing: 1,
+    fontFamily: FONTS.extraBold,
+    fontSize: 16,
+    color: COLORS.text,
   },
   nsfwGateContainer: {
     flex: 1,
@@ -820,18 +997,17 @@ const styles = StyleSheet.create({
   },
   nsfwGateBadge: {
     borderWidth: 1.5,
-    borderColor: '#ef4444',
+    borderColor: COLORS.warning,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    backgroundColor: 'rgba(255, 36, 73, 0.1)',
     marginBottom: 8,
   },
   nsfwGateBadgeText: {
-    fontFamily: FONTS.mono,
+    fontFamily: FONTS.bold,
     fontSize: 14,
-    color: '#ff8888',
-    fontWeight: 'bold',
+    color: COLORS.warning,
     letterSpacing: 1,
   },
   nsfwGateTitle: {
@@ -844,7 +1020,7 @@ const styles = StyleSheet.create({
   nsfwGateDescription: {
     fontFamily: FONTS.medium,
     fontSize: 16,
-    color: '#94a3b8',
+    color: COLORS.textMuted,
     textAlign: 'center',
     lineHeight: 24,
     marginBottom: 16,
@@ -861,12 +1037,12 @@ const styles = StyleSheet.create({
     height: 50,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 12,
+    borderRadius: 25,
   },
   nsfwGateBtnText: {
     fontFamily: FONTS.bold,
     fontSize: 16,
-    color: '#0b101e',
+    color: COLORS.bg,
     letterSpacing: 0.5,
   },
   spinIcon: {},
