@@ -1,175 +1,196 @@
-<div align="center">
-
 # 🎮 LootQuest
 
-[![React Native](https://img.shields.io/badge/React_Native-v0.74+-61DAFB?logo=react&logoColor=black&style=for-the-badge)](https://reactnative.dev)
-[![Expo](https://img.shields.io/badge/Expo-SDK%2054-000020?logo=expo&logoColor=white&style=for-the-badge)](https://expo.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-v5.0-3178C6?logo=typescript&logoColor=white&style=for-the-badge)](https://www.typescriptlang.org)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Chat-5865F2?logo=discord&logoColor=white&style=for-the-badge)](https://discord.gg/pXxnhKWdGH)
+<div align="center">
 
-**Track free game giveaways from multiple platforms in one place. Never miss a free game again.**
+<img src="screenshots/LootQuest_HomePage_Mockup.png" width="300"/>
 
-[📥 Download Latest APK (Beta)](https://github.com/EklavyaAhuja/LootQuest/releases/download/v1.0.0/LootQuest-v1.0.0-beta.apk)
+### Never Miss a Free Game Again
+
+Track giveaways from Steam, Epic Games, GOG, itch.io, PlayStation, Xbox and more in one place.
+
+[📥 Download Beta APK](https://github.com/EklavyaAhuja/LootQuest/releases/download/v1.1.0/LootQuest-v1.1.0-beta.apk)
+
+---
+
+Track • Claim • Get Notified • Build Your Vault
 
 </div>
 
 ---
 
-## 📖 Overview
+# 🚀 Why LootQuest?
 
-**LootQuest** is a modern, dark-themed mobile application designed to help gamers discover, track, and claim free game giveaways across multiple storefronts (Steam, Epic Games, GOG, itch.io, PlayStation, Xbox, and mobile). 
+Every day, dozens of free games, DLCs, beta keys and in-game rewards are released across multiple platforms.
 
-Instead of manual daily checking across forums and sites, LootQuest aggregates giveaways into a unified feed, enriches them with storefront metadata, runs background checks to notify you of new deals instantly, and lets you track your claimed rewards in a personal vault.
+Most gamers discover them too late.
 
----
-
-## ✨ Key Features
-
-### 📱 Unified Giveaway Feed
-- Live listings consolidated from **Reddit (r/FreeGameFindings)** and **GamerPower API**.
-- Platform-specific color coding and visual store badges for instant recognition.
-- Smart sorting that prioritizes fresh active giveaways.
-
-### 🔍 Rich Storefront Metadata (Enrichment Engine)
-- **Steam Details**: Pulls developer/publisher credits, user ratings, SteamDB scores, achievements, genres, and release dates directly from the Steam Store API.
-- **Epic Games Details**: Scrapes Epic Games Store API for promotional end dates, original values, and high-res promotional imagery.
-- **Auto-Redirect Resolution**: Resolves obfuscated tracking/redirect URLs (like GamerPower open links) programmatically in the background to access direct storefront APIs.
-
-### ⏱️ Expiry & Countdown Tracking
-- Real-time client-side countdown timers displaying exact hours/days remaining.
-- Visual alerts for giveaways expiring soon.
-- Automatic filtering and demarcation of expired promotions.
-
-### 🔔 Smart Background Sync & Notifications
-- Periodic background worker (configurable intervals: 15, 30, or 60 minutes) fetching new giveaways.
-- Delivery of local notifications using a custom system channel and custom sound alert.
-- Dynamically throttled checking to respect system resources and preserve battery.
-
-### 🔞 NSFW Safety Gate
-- Blur filters applied to NSFW game thumbnails to ensure safe browsing.
-- Interactive, explicit age verification gate before viewing adult-only titles.
-
-### 🛡️ Claim Vault
-- Persistent local inventory system to save claimed games.
-- Visual indicator to show which giveaways you have already completed.
-- Watch-list support for upcoming or ongoing offers.
+LootQuest solves this by aggregating giveaways from multiple sources into a single mobile experience with smart notifications, claim tracking, and platform filtering.
 
 ---
 
-## 📸 Screenshots
+# 📸 App Preview
 
-> [!TIP]
-> *Upload your updated screenshots to the `/screenshots` folder and replace the file paths below to refresh the visual showcase.*
+<div align="center">
 
-| Home Feed | Giveaway Details |
-| :---: | :---: |
-| <img src="screenshots/MainPage_LootQuest.jpeg" width="300" alt="Home Feed"/> | <img src="screenshots/GamePage_LootQuest.jpeg" width="300" alt="Details Screen"/> |
+|                       Home Feed                      |                   Giveaway Details                   |                         Vault                         |
+| :--------------------------------------------------: | :--------------------------------------------------: | :---------------------------------------------------: |
+| <img src="screenshots/LootQuest_HomePage_Mockup.png" width="260"/> | <img src="screenshots/LootQuest_GamePage_Mockup.png" width="260"/> | <img src="screenshots/LootQuest_VaultPage_Mockup.png" width="260"/> |
 
-| Personal Vault | Settings & Notifications |
-| :---: | :---: |
-| <img src="screenshots/Vault_LootQuest.jpeg" width="300" alt="Claimed Vault"/> | <img src="screenshots/Settings_LootQuest.jpeg" width="300" alt="Settings Screen"/> |
+|                         Alerts                         |                         Settings                         |
+| :----------------------------------------------------: | :------------------------------------------------------: |
+| <img src="screenshots/LootQuest_AlertPage_Mockup.png" width="260"/> | <img src="screenshots/LootQuest_SettingsPage_Mockup.png" width="260"/> |
 
----
-
-## 🛠️ Architecture & Tech Stack
-
-### Mobile Client (Frontend)
-- **Core Framework**: React Native (via **Expo SDK 54**)
-- **Language**: TypeScript
-- **State & Local Storage**: 
-  - `AsyncStorage` for feed caching and claims tracking.
-  - `SecureStore` for encrypted user settings and tokens.
-- **Styling**: Curated dark theme built on HSL palettes with micro-animations via custom pressable behaviors (`BouncyPressable`).
-- **Background Tasks**: `Expo TaskManager` & `BackgroundFetch`
-- **Notifications**: `Expo Notifications`
-
-### Backend Aggregator (Scraper & Proxy)
-- **Platform**: Node.js & Express
-- **Reddit RSS Pipeline**:
-  - Implements multi-tier request fallbacks (Direct RSS -> OpenRSS -> RSSHub) to bypass Cloudflare rate-limits (`429`) and connection resets.
-  - Custom XML/Atom parser with CDATA normalization and regex-based HTML decoding.
-- **Admin Dashboard Log Viewer**: Real-time console logger interception with a secure `/admin/logs` viewer endpoint for checking aggregator performance.
+</div>
 
 ---
 
-## 🚀 Development Setup
+# ✨ Features
 
-### Mobile Client
+## 🎯 Unified Giveaway Feed
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/EklavyaAhuja/LootQuest.git
-   cd LootQuest
-   ```
+* Steam giveaways
+* Epic Games promotions
+* GOG freebies
+* itch.io rewards
+* PlayStation offers
+* Xbox promotions
+* Community-discovered giveaways
 
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Configure environment variables:**
-   Copy the example environment file:
-   ```bash
-   cp .env.example .env
-   ```
-   *Edit `.env` and configure `EXPO_PUBLIC_DISCORD_WEBHOOK_URL` if you want to test anonymous feedback submission.*
-
-4. **Start the Expo server:**
-   ```bash
-   npx expo start
-   ```
-   *Press `a` to run on an Android Emulator, `i` for iOS Simulator, or scan the QR code to run on your physical device via the Expo Go app.*
+Everything in one place.
 
 ---
 
-### Backend Server (Optional)
+## 🔍 Rich Giveaway Details
 
-If you wish to host your own RSS scraping aggregator proxy locally:
+Every listing includes:
 
-1. **Navigate to the backend directory:**
-   ```bash
-   cd fgf-backend
-   ```
+* Publisher & developer information
+* Platform metadata
+* Store ratings
+* Giveaway value
+* Expiry dates
+* Claim instructions
 
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Start the Express server:**
-   ```bash
-   npm start
-   ```
-   The backend scraper will run on `http://localhost:5000` (or the port specified in your `.env`).
+No more opening five tabs to understand a giveaway.
 
 ---
 
-## 📦 Installation (Production APK)
+## ⏳ Real-Time Expiry Tracking
 
-1. Navigate to the [Releases](https://github.com/EklavyaAhuja/LootQuest/releases) section of this repository.
-2. Download the latest `.apk` asset file.
-3. Enable **Install from Unknown Sources** in your Android device's security settings.
-4. Open the downloaded `.apk` file to install the application.
-5. Launch LootQuest and start collecting freebies!
+* Live countdown timers
+* Expiring-soon indicators
+* Active/inactive status
+* Automatic expiry detection
 
----
-
-## 💬 Community & Feedback
-
-If you find a bug, have a suggestion, or want to contribute:
-- **Discord Invite**: Join our community chat on [Discord](https://discord.gg/pXxnhKWdGH).
-- **In-App Feedback**: Submit bug reports and feature requests directly inside the app's settings drawer (delivered anonymously to our Discord channel).
-- **GitHub Issues**: Open a new issue in this repository with your device model and steps to reproduce.
+Never lose a giveaway because you forgot about it.
 
 ---
 
-## ⚖️ Disclaimer
+## 🔔 Smart Notifications
 
-*LootQuest is an aggregator and client-side manager. LootQuest does not host, distribute, or license any games. All trademarks, logos, screenshots, and game copyrights belong to their respective developers, publishers, and storefront platforms.*
+Get notified when:
+
+* New giveaways appear
+* Major promotions go live
+
+
+Choose exactly which platforms you care about.
 
 ---
 
-## 📄 License
+## 🏆 Claim Vault
 
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+Build your own giveaway collection.
+
+* Track claimed games
+* Store reward history
+* Monitor total collection value
+* Prevent duplicate claims
+
+---
+
+## ⚖️ Safe Browsing
+
+* NSFW thumbnail blur
+* Age verification gate
+* Content filtering controls
+
+---
+
+# 🏗️ Tech Stack
+
+### Mobile App
+
+* React Native
+* Expo SDK 54
+* TypeScript
+* AsyncStorage
+* SecureStore
+* Expo Notifications
+* Expo Background Fetch
+
+### Backend
+
+* Node.js
+* Express
+* RSS Aggregation Engine
+* Giveaway Enrichment Pipeline
+* Multi-layer Fallback System
+
+---
+
+# 🚀 Getting Started
+
+## Clone
+
+```bash
+git clone https://github.com/EklavyaAhuja/LootQuest.git
+cd LootQuest
+```
+
+## Install
+
+```bash
+npm install
+```
+
+## Run
+
+```bash
+npx expo start
+```
+
+---
+
+# 📦 Download
+
+Download the latest Android beta:
+
+[LootQuest v1.1.0 Beta APK](https://github.com/EklavyaAhuja/LootQuest/releases/download/v1.1.0/LootQuest-v1.1.0-beta.apk)
+
+---
+
+# 💬 Community
+
+Discord:
+https://discord.gg/pXxnhKWdGH
+
+Issues:
+Open a GitHub Issue
+
+Feedback:
+Use the built-in feedback system inside the app.
+
+---
+
+# ⚖️ Disclaimer
+
+LootQuest does not host, distribute, or license games.
+
+All game assets, trademarks, logos and intellectual property belong to their respective owners.
+
+---
+
+# 📄 License
+
+MIT License
