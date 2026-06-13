@@ -345,10 +345,20 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
         if (cachedRaw) {
           const cachedDeals = JSON.parse(cachedRaw);
           if (Array.isArray(cachedDeals) && cachedDeals.length > 0) {
-            setPosts(cachedDeals);
+            // Recalculate stale countdown timers and expiration states on cached deals immediately
+            const recalculated = cachedDeals.map((deal: Deal) => {
+              const expired = isDealExpired(deal);
+              return {
+                ...deal,
+                isExpired: expired,
+                timeLeft: getTimeLeft(deal.expiresAt || deal.endDate),
+                expiryStatus: expired ? 'EXPIRED' : deal.expiryStatus,
+              };
+            });
+            setPosts(recalculated);
             setLoading(false);
             hasCached = true;
-            console.log('[FeedScreen] Loaded merged feed from cache instantly.');
+            console.log('[FeedScreen] Loaded merged feed from cache instantly with updated timers.');
           }
         }
       } catch (err) {
