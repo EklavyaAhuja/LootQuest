@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="screenshots/LootQuest_HomePage_Mockup.png" width="300"/>
+<img src="assets/Icon_Latest.png" width="300"/>
 
 ### Never Miss a Free Game Again
 
