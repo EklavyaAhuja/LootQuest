@@ -164,14 +164,15 @@ const RadarAnimation = () => {
             <Filter id="radarGlow" x="-20%" y="-20%" width="140%" height="140%">
               <FeGaussianBlur stdDeviation="3" />
             </Filter>
-            {/* Linear gradient going from leading edge (right) to trailing edge (left) */}
-            <LinearGradient id="sweepGrad" x1="1" y1="0" x2="0" y2="0">
-              <Stop offset="0%" stopColor="rgba(46, 139, 87, 0.85)" />
+            {/* Symmetrical linear gradient centered around the dashed line */}
+            <LinearGradient id="sweepGrad" x1="0" y1="0" x2="1" y2="0">
+              <Stop offset="0%" stopColor="rgba(46, 139, 87, 0.0)" />
+              <Stop offset="50%" stopColor="rgba(46, 139, 87, 0.85)" />
               <Stop offset="100%" stopColor="rgba(46, 139, 87, 0.0)" />
             </LinearGradient>
           </Defs>
-          {/* Blurred seagreen 90-degree sector trailing behind */}
-          <Path d="M 50 50 L 50 6 A 44 44 0 0 0 6 50 Z" fill="url(#sweepGrad)" filter="url(#radarGlow)" />
+          {/* Blurred seagreen 90-degree sector centered around the dashed line */}
+          <Path d="M 50 50 L 18.9 18.9 A 44 44 0 0 1 81.1 18.9 Z" fill="url(#sweepGrad)" filter="url(#radarGlow)" />
           {/* Sharp cyan glow along the leading edge */}
           <Line x1={50} y1={50} x2={50} y2={6} stroke="#5de6ff" strokeWidth={1.2} opacity={0.6} />
           {/* Sharp dashed sweep line (white) directly at the leading edge */}
