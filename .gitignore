@@ -24,10 +24,8 @@ expo-env.d.ts
 *.p12
 *.key
 *.mobileprovision
-*.keystore
-google-services.json
+# GoogleService-Info.plist  # iOS only — contains private key, keep secret
 GoogleService-Info.plist
-assets/google-services.json
 
 # ─── Metro ───────────────────────────────────────────────────────────────────
 .metro-health-check*

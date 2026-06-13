@@ -19,7 +19,7 @@
     },
     "android": {
       "package": "com.freegamefindings.app",
-      "googleServicesFile": "./google-services.json",
+      "googleServicesFile": "./assets/google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#0B101E",
         "foregroundImage": "./assets/Icon_Latest.png"

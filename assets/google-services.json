@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "611018824333",
+    "project_id": "lootquest-79135",
+    "storage_bucket": "lootquest-79135.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:611018824333:android:2421d6ae7179a42bffe0c4",
+        "android_client_info": {
+          "package_name": "com.freegamefindings.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBrD9q4QKxMB_h87c6fkuya1KZoM0r86IU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
