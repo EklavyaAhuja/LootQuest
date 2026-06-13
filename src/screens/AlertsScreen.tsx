@@ -115,7 +115,7 @@ const RadarAnimation = () => {
           <Defs>
             {/* Blur filter to make the seagreen light spread out and glow */}
             <Filter id="radarGlow" x="-20%" y="-20%" width="140%" height="140%">
-              <FeGaussianBlur stdDeviation="6" />
+              <FeGaussianBlur stdDeviation="3.5" />
             </Filter>
             {/* Symmetrical gradient from left edge to center to right edge */}
             <LinearGradient id="sweepGrad" x1="0" y1="0" x2="1" y2="0">
@@ -125,7 +125,7 @@ const RadarAnimation = () => {
             </LinearGradient>
           </Defs>
           {/* Blurred seagreen 120-degree sector centered around the dashed line */}
-          <Path d="M 45 45 L 12.1 26 A 38 38 0 0 1 77.9 26 Z" fill="url(#sweepGrad)" filter="url(#radarGlow)" />
+          <Path d="M 45 45 L 6.9 23 A 44 44 0 0 1 83.1 23 Z" fill="url(#sweepGrad)" filter="url(#radarGlow)" />
           {/* Sharp dashed sweep line (white/light-grey) directly in the middle */}
           <Line x1={45} y1={45} x2={45} y2={1} stroke="#ffffff" strokeWidth={1.2} strokeDasharray="2, 2" />
         </Svg>
@@ -759,6 +759,8 @@ const styles = StyleSheet.create({
     width: 90,
     height: 90,
     position: 'absolute',
+    top: 0,
+    left: 0,
   },
   dot: {
     width: 4,
