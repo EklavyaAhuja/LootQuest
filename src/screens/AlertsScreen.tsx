@@ -51,28 +51,35 @@ const RadarAnimation = () => {
       {/* Static Background Rings */}
       <Svg width={90} height={90} style={StyleSheet.absoluteFill}>
         {/* Outer Ring */}
-        <Circle cx={45} cy={45} r={44} stroke="rgba(57, 255, 20, 0.15)" strokeWidth={1} fill="transparent" />
+        <Circle cx={45} cy={45} r={44} stroke="#333333" strokeWidth={1} fill="transparent" />
         {/* Middle Dashed Ring */}
-        <Circle cx={45} cy={45} r={28} stroke="rgba(57, 255, 20, 0.12)" strokeWidth={1} strokeDasharray="4, 4" fill="transparent" />
-        {/* Center Ring */}
-        <Circle cx={45} cy={45} r={12} stroke="rgba(57, 255, 20, 0.15)" strokeWidth={1} strokeDasharray="2, 2" fill="transparent" />
-        {/* Center Dot */}
-        <Circle cx={45} cy={45} r={3} fill="#39ff14" />
+        <Circle cx={45} cy={45} r={32} stroke="#444444" strokeWidth={1} strokeDasharray="3, 3" fill="transparent" />
       </Svg>
 
       {/* Rotating Sweep */}
       <Animated.View style={[styles.radarSweep, { transform: [{ rotate }] }]}>
         <Svg width={90} height={90}>
           <Defs>
-            <LinearGradient id="sweepGrad" x1="1" y1="1" x2="0" y2="0">
-              <Stop offset="0%" stopColor="#39ff14" stopOpacity="0.4" />
-              <Stop offset="100%" stopColor="#39ff14" stopOpacity="0.0" />
+            {/* Gradient from top-middle to left-middle */}
+            <LinearGradient id="sweepGrad" x1="0.5" y1="0" x2="0" y2="0.5">
+              <Stop offset="0%" stopColor="seagreen" stopOpacity="0.65" />
+              <Stop offset="100%" stopColor="seagreen" stopOpacity="0.0" />
             </LinearGradient>
           </Defs>
-          <Path d="M 45 45 L 45 1 A 44 44 0 0 1 89 45 Z" fill="url(#sweepGrad)" />
-          <Line x1={45} y1={45} x2={45} y2={1} stroke="#39ff14" strokeWidth={1.5} />
+          {/* 90-degree quadrant trailing the sweep line */}
+          <Path d="M 45 45 L 45 1 A 44 44 0 0 0 1 45 Z" fill="url(#sweepGrad)" />
+          {/* Dashed sweep line (white/light-grey) */}
+          <Line x1={45} y1={45} x2={45} y2={1} stroke="#ffffff" strokeWidth={1} strokeDasharray="2, 2" />
         </Svg>
       </Animated.View>
+
+      {/* Center Circle Overlay (sits on top of the rotating sweep to cover the center) */}
+      <Svg width={90} height={90} style={StyleSheet.absoluteFill}>
+        {/* Dark solid circle with stroke */}
+        <Circle cx={45} cy={45} r={18} fill={COLORS.surfaceCharcoal} stroke="#333333" strokeWidth={1} />
+        {/* Inner dashed ring */}
+        <Circle cx={45} cy={45} r={10} stroke="#444444" strokeWidth={1} strokeDasharray="2, 2" fill="transparent" />
+      </Svg>
     </View>
   );
 };
