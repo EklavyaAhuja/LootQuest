@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { redditFetch } from './redditFetch';
 
 const CACHE_KEY = 'fgf_tasks_post_ids';
 const CACHE_TIME_KEY = 'fgf_tasks_post_ids_timestamp';
@@ -49,41 +50,34 @@ class TasksFeedService {
 
     this.isFetching = true;
     try {
-      console.log('[TasksFeedService] Fetching tasks flair RSS feed...');
-      const url = `https://www.reddit.com/r/FreeGameFindings/search.rss?q=flair_name:%22Tasks%22&restrict_sr=1&sort=new&t=${Date.now()}`;
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'android:com.freegamefindings.app:v1.0.0 (by /u/freegamefindings)',
-        },
-      });
+      console.log('[TasksFeedService] Fetching tasks flair feed...');
+      const rssUrl = 'https://old.reddit.com/r/FreeGameFindings/search.rss?q=flair_name:%22Tasks%22&restrict_sr=1&sort=new';
+      // redditFetch handles 429 backoff – throws if rate-limited or unrecoverable
+      const response = await redditFetch(rssUrl);
 
-      if (response.ok) {
-        const xml = await response.text();
-        const entries = xml.split('<entry>');
-        entries.shift(); // remove XML header metadata
+      const xml = await response.text();
+      const entries = xml.split('<entry>');
+      entries.shift(); // remove XML header metadata
 
-        const ids: string[] = [];
-        for (const entry of entries) {
-          const idMatch = entry.match(/<id>([^<]+)<\/id>/);
-          if (idMatch) {
-            const cleanId = idMatch[1].replace('t3_', '').trim();
-            if (cleanId) {
-              ids.push(cleanId);
-            }
+      const ids: string[] = [];
+      for (const entry of entries) {
+        const idMatch = entry.match(/<id>([^<]+)<\/id>/);
+        if (idMatch) {
+          const cleanId = idMatch[1].replace('t3_', '').trim();
+          if (cleanId) {
+            ids.push(cleanId);
           }
         }
-
-        this.tasksIds = new Set(ids);
-        this.lastFetched = Date.now();
-
-        await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(ids));
-        await AsyncStorage.setItem(CACHE_TIME_KEY, String(this.lastFetched));
-        console.log(`[TasksFeedService] Successfully parsed and cached ${ids.length} tasks post IDs.`);
-      } else {
-        console.warn(`[TasksFeedService] Failed to fetch tasks feed: status ${response.status}`);
       }
+
+      this.tasksIds = new Set(ids);
+      this.lastFetched = Date.now();
+
+      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(ids));
+      await AsyncStorage.setItem(CACHE_TIME_KEY, String(this.lastFetched));
+      console.log(`[TasksFeedService] Successfully parsed and cached ${ids.length} tasks post IDs.`);
     } catch (error) {
-      console.warn('[TasksFeedService] Error fetching tasks feed:', error);
+      console.warn('[TasksFeedService] Fetch failed, using cached IDs:', error);
     } finally {
       this.isFetching = false;
     }

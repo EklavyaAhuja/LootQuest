@@ -1,5 +1,12 @@
 import { getAppSettings, getRedditAccessToken, saveRedditAccessToken } from './storageService';
 import { extractTitle } from './FGFBotParser';
+import { Deal } from '../models/Deal';
+import { postToBasicDeal } from './DealClassifier';
+import { fetchGamerPowerGiveaways } from './GamerPowerService';
+import { mergeAndDeduplicateDeals, mergeAndEnrichDeals } from './filterUtils';
+import { extractDirectStoreUrl, normalizeTitle } from '../utils/dealUtils';
+import { redditFetch } from './redditFetch';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export interface RedditPost {
   id: string;
@@ -18,71 +25,7 @@ export interface RedditPost {
   isNsfw?: boolean;
 }
 
-/**
- * Custom base64 encoder to avoid global btoa crashes in Hermes
- */
-function base64Encode(str: string): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let out = '';
-  let i = 0;
-  const len = str.length;
-  while (i < len) {
-    const c1 = str.charCodeAt(i++) & 0xff;
-    if (i === len) {
-      out += chars.charAt(c1 >> 2);
-      out += chars.charAt((c1 & 0x3) << 4);
-      out += '==';
-      break;
-    }
-    const c2 = str.charCodeAt(i++);
-    if (i === len) {
-      out += chars.charAt(c1 >> 2);
-      out += chars.charAt(((c1 & 0x3) << 4) | ((c2 & 0xF0) >> 4));
-      out += chars.charAt((c2 & 0xF) << 2);
-      out += '=';
-      break;
-    }
-    const c3 = str.charCodeAt(i++);
-    out += chars.charAt(c1 >> 2);
-    out += chars.charAt(((c1 & 0x3) << 4) | ((c2 & 0xF0) >> 4));
-    out += chars.charAt(((c2 & 0xF) << 2) | ((c3 & 0xC0) >> 6));
-    out += chars.charAt(c3 & 0x3F);
-  }
-  return out;
-}
 
-/**
- * Requests a new application-only anonymous OAuth token from Reddit
- */
-async function acquireRedditToken(clientId: string): Promise<string> {
-  try {
-    const authHeader = 'Basic ' + base64Encode(clientId + ':');
-    const response = await fetch('https://www.reddit.com/api/v1/access_token', {
-      method: 'POST',
-      headers: {
-        'Authorization': authHeader,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'android:com.freegamefindings.app:v1.0.0 (by /u/freegamefindings)',
-      },
-      body: 'grant_type=client_credentials&device_id=DO_NOT_TRACK_THIS_DEVICE',
-    });
-
-    if (!response.ok) {
-      throw new Error(`Token request failed: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    if (!data.access_token) {
-      throw new Error('No access token returned from Reddit API');
-    }
-
-    await saveRedditAccessToken(data.access_token, data.expires_in || 3600);
-    return data.access_token;
-  } catch (error) {
-    console.error('Failed to acquire Reddit token:', error);
-    throw error;
-  }
-}
 
 /**
  * Extracts platform, type, clean title, and basic task heuristic from Reddit title
@@ -176,6 +119,38 @@ function extractDomain(url: string): string {
   } catch (e) {
     return '';
   }
+}
+
+/**
+ * Robust Hermes-safe date parser that maps date strings to Unix milliseconds.
+ */
+function parseDateToMs(dateStr?: string): number {
+  if (!dateStr || dateStr.trim() === '' || dateStr.toUpperCase() === 'N/A') {
+    return Date.now();
+  }
+  try {
+    const t = Date.parse(dateStr);
+    if (!isNaN(t)) return t;
+
+    const withT = dateStr.replace(' ', 'T');
+    const t2 = Date.parse(withT);
+    if (!isNaN(t2)) return t2;
+
+    const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
+    if (match) {
+      const year = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10) - 1;
+      const day = parseInt(match[3], 10);
+      const hour = parseInt(match[4], 10);
+      const minute = parseInt(match[5], 10);
+      const second = parseInt(match[6], 10);
+      const utc = Date.UTC(year, month, day, hour, minute, second);
+      if (!isNaN(utc)) return utc;
+    }
+  } catch (e) {
+    console.warn('[redditService] Date parsing failed for:', dateStr, e);
+  }
+  return Date.now();
 }
 
 /**
@@ -284,360 +259,122 @@ function parseRedditRssXml(xmlText: string): RedditPost[] {
   });
 }
 
-/**
- * Fetch RSS directly from Reddit
- */
-async function fetchViaDirectRss(feedType: 'hot' | 'new'): Promise<RedditPost[]> {
-  const rssUrl = `https://www.reddit.com/r/FreeGameFindings/${feedType === 'new' ? 'new/' : ''}.rss?t=${Date.now()}`;
-  console.log(`Attempting direct RSS fetch from: ${rssUrl}`);
 
-  const response = await fetch(rssUrl, {
-    headers: {
-      'User-Agent': 'android:com.freegamefindings.app:v1.0.0 (by /u/freegamefindings)',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Direct RSS failed with status ${response.status}`);
-  }
-
-  const xml = await response.text();
-  return parseRedditRssXml(xml);
-}
-
-/**
- * Fetch RSS via public CORS proxy (e.g. corsproxy.io)
- */
-async function fetchViaProxyRss(feedType: 'hot' | 'new'): Promise<RedditPost[]> {
-  const rssUrl = `https://www.reddit.com/r/FreeGameFindings/${feedType === 'new' ? 'new/' : ''}.rss?t=${Date.now()}`;
-  const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(rssUrl)}`;
-  console.log(`Attempting proxied RSS fetch from: ${proxyUrl}`);
-
-  const response = await fetch(proxyUrl, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Proxied RSS failed with status ${response.status}`);
-  }
-
-  const xml = await response.text();
-  return parseRedditRssXml(xml);
-}
-
-/**
- * Fetch giveaways using the rss2json converter proxy
- */
-async function fetchViaRss2Json(feedType: 'hot' | 'new'): Promise<RedditPost[]> {
-  const rssUrl = `https://www.reddit.com/r/FreeGameFindings/${feedType === 'new' ? 'new/' : ''}.rss?t=${Date.now()}`;
-  const fetchUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}`;
-
-  console.log(`Attempting to fetch via rss2json: ${fetchUrl}`);
-  const response = await fetch(fetchUrl);
-  if (!response.ok) {
-    throw new Error(`rss2json request failed with status ${response.status}`);
-  }
-
-  const data = await response.json();
-  if (data.status !== 'ok') {
-    throw new Error(`rss2json response status: ${data.status}`);
-  }
-
-  const items = data.items || [];
-  const parsed = items.map((item: any) => {
-    const id = item.guid ? item.guid.replace('t3_', '') : 'rss_' + Math.random().toString(36).substr(2, 9);
-    const description = item.description || '';
-
-    const linkMatch = description.match(/href="([^"]+)"[^>]*>\[link\]/);
-    let giveawayUrl = item.link || '';
-    if (linkMatch) {
-      giveawayUrl = linkMatch[1].replace(/&amp;/g, '&');
-    }
-
-    let selftext = '';
-    const mdMatch = description.match(/<div class="md">([\s\S]*?)<\/div>/);
-    if (mdMatch) {
-      selftext = mdMatch[1]
-        .replace(/<[^>]+>/g, '')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .trim();
-    }
-
-    const { platform, type, cleanTitle, isTask } = parseRedditTitle(
-      item.title || '',
-      giveawayUrl,
-      selftext
-    );
-
-    const coverImage = item.thumbnail && item.thumbnail.length > 0 ? item.thumbnail.replace(/&amp;/g, '&') : undefined;
-
-    const categories = item.categories || [];
-    const isNsfw = categories.some((c: string) => c.toLowerCase().includes('nsfw')) ||
-                   /nsfw/i.test(item.title || '') ||
-                   /18\+/i.test(item.title || '') ||
-                   /nsfw/i.test(selftext) ||
-                   /nsfw/i.test(giveawayUrl) ||
-                   /mazakon/i.test(item.title || '') ||
-                   /tengoku/i.test(item.title || '') ||
-                   giveawayUrl.toLowerCase().includes('dlsite');
-
-    return {
-      id,
-      title: item.title || '',
-      url: giveawayUrl,
-      permalink: item.link || '',
-      author: item.author ? item.author.replace('/u/', '') : 'unknown',
-      createdAt: item.pubDate ? new Date(item.pubDate.replace(' ', 'T')).getTime() : Date.now(),
-      selftext,
-      domain: extractDomain(giveawayUrl),
-      platform,
-      type,
-      cleanTitle,
-      isTask,
-      coverImage,
-      isNsfw,
-    };
-  });
-
-  return parsed.filter((post: any) => {
-    if (!post.platform || post.platform.trim() === '' || post.platform.toLowerCase() === 'unknown') {
-      return false;
-    }
-    const titleLower = post.title.toLowerCase();
-    const isModOrMega =
-      titleLower.includes('mod post') ||
-      titleLower.includes('mega thread') ||
-      titleLower.includes('weekly discussion') ||
-      titleLower.includes('exiled giveaways');
-    return !isModOrMega;
-  });
-}
-
-/**
- * Fetch giveaways using the GamerPower API (No authentication, stable JSON output, native cover images)
- */
-async function fetchViaGamerPower(feedType: 'hot' | 'new', limit: number): Promise<RedditPost[]> {
-  const url = 'https://www.gamerpower.com/api/giveaways';
-  console.log(`Fetching feed from GamerPower API: ${url}`);
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`GamerPower request failed with status ${response.status}`);
-  }
-
-  const arr = await response.json();
-  if (!Array.isArray(arr)) {
-    throw new Error('GamerPower did not return an array');
-  }
-
-  const activeGiveaways = arr.filter((item) => item.status === 'Active');
-
-  // GamerPower API naturally returns newest first. 
-  // If user requested 'new', sort by id descending.
-  const sorted = feedType === 'new'
-    ? activeGiveaways.sort((a, b) => b.id - a.id)
-    : activeGiveaways;
-
-  return sorted.slice(0, limit).map((item: any) => {
-    const id = 'gp_' + item.id;
-    const giveawayUrl = item.open_giveaway_url || item.open_giveaway || item.gamerpower_url || '';
-
-    // Standardize platform tags
-    let platform = 'PC';
-    const lowerPlatforms = (item.platforms || '').toLowerCase();
-    if (lowerPlatforms.includes('steam')) platform = 'Steam';
-    else if (lowerPlatforms.includes('epic')) platform = 'Epic Games';
-    else if (lowerPlatforms.includes('gog')) platform = 'GOG';
-    else if (lowerPlatforms.includes('itch')) platform = 'itch.io';
-    else if (lowerPlatforms.includes('playstation') || lowerPlatforms.includes('ps4') || lowerPlatforms.includes('ps5')) platform = 'Playstation';
-    else if (lowerPlatforms.includes('xbox')) platform = 'Xbox';
-    else if (lowerPlatforms.includes('switch') || lowerPlatforms.includes('nintendo')) platform = 'Nintendo Switch';
-    else if (lowerPlatforms.includes('mobile') || lowerPlatforms.includes('android') || lowerPlatforms.includes('ios')) platform = 'Mobile';
-
-    // Heuristics to check if task-based claim is required
-    const lowerInstructions = (item.instructions || '').toLowerCase();
-    const lowerUrl = giveawayUrl.toLowerCase();
-    const isDirectStore = ['steampowered.com', 'epicgames.com', 'gog.com', 'itch.io'].some((d) => lowerUrl.includes(d));
-    const isTask = !isDirectStore || ['tasks', 'alienware', 'steelseries', 'gleam', 'social', 'follow', 'retweet', 'newsletter'].some((k) => lowerInstructions.includes(k));
-
-    // Remove parentheses and trailing giveaway suffixes from title
-    const cleanTitle = item.title
-      .replace(/\s*\([^)]+\)\s*/g, ' ')
-      .replace(/\s+Giveaway\s*$/i, '')
-      .replace(/\s+Key\s*$/i, '')
-      .trim();
-
-    // Compile description and instructions to recreate selftext
-    const selftext = `${item.description || ''}\n\nInstructions:\n${item.instructions || ''}`;
-
-    const isNsfw = /nsfw/i.test(item.title || '') ||
-                   /18\+/i.test(item.title || '') ||
-                   /nsfw/i.test(selftext) ||
-                   /nsfw/i.test(giveawayUrl) ||
-                   /mazakon/i.test(item.title || '') ||
-                   /tengoku/i.test(item.title || '') ||
-                   giveawayUrl.toLowerCase().includes('dlsite');
-
-    return {
-      id,
-      title: item.title || '',
-      url: giveawayUrl,
-      permalink: item.gamerpower_url || giveawayUrl,
-      author: 'GamerPower',
-      createdAt: item.published_date ? new Date(item.published_date.replace(' ', 'T')).getTime() : Date.now(),
-      selftext,
-      domain: extractDomain(giveawayUrl),
-      platform,
-      type: item.type || 'Game',
-      cleanTitle,
-      isTask,
-      coverImage: item.image || item.thumbnail || '',
-      isNsfw,
-    };
-  }).filter((post) => {
-    return post.platform && post.platform.trim() !== '' && post.platform.toLowerCase() !== 'unknown';
-  });
-}
 
 /**
  * Fetch posts from the FreeGameFindings subreddit JSON feed
  * @param feedType 'hot' or 'new'
  * @param limit number of posts to fetch
  */
+
+
+/**
+ * Fetch posts from the FreeGameFindings subreddit JSON or RSS feed with pagination support.
+ */
+export async function fetchRedditPostsPaginated(
+  feedType: 'hot' | 'new' = 'hot',
+  limit: number = 30,
+  after?: string
+): Promise<{ posts: RedditPost[]; after?: string }> {
+  try {
+    const rssUrl = `https://old.reddit.com/r/FreeGameFindings/${feedType === 'new' ? 'new/' : ''}.rss`;
+    // redditFetch handles 429 backoff – throws if rate-limited or unrecoverable
+    const response = await redditFetch(rssUrl);
+    const xml = await response.text();
+    const posts = parseRedditRssXml(xml);
+    return { posts: posts.slice(0, limit) };
+  } catch (error) {
+    console.warn('[RedditService] Reddit fetch failed, continuing with GamerPower only:', error);
+    return { posts: [] };
+  }
+}
+
+/**
+ * Fetch posts from the FreeGameFindings subreddit JSON feed (Backwards Compatible signature)
+ */
 export async function fetchFreeGameFindings(
   feedType: 'hot' | 'new' = 'hot',
   limit: number = 30
 ): Promise<RedditPost[]> {
   try {
-    const settings = await getAppSettings();
-    const clientId = settings?.redditClientId;
-
-    // A: Official OAuth Path (If Client ID is configured)
-    if (clientId && clientId.trim().length > 0) {
-      try {
-        console.log('Fetching Reddit feed using official OAuth API...');
-        let token = await getRedditAccessToken();
-        if (!token) {
-          token = await acquireRedditToken(clientId.trim());
-        }
-
-        const response = await fetch(
-          `https://oauth.reddit.com/r/FreeGameFindings/${feedType}.json?limit=${limit}`,
-          {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'User-Agent': 'android:com.freegamefindings.app:v1.0.0 (by /u/freegamefindings)',
-            },
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error(`OAuth Request failed with status ${response.status}`);
-        }
-
-        const data = await response.json();
-        return parseRedditJson(data);
-      } catch (oauthError) {
-        console.warn('OAuth fetch failed, falling back to GamerPower API:', oauthError);
-      }
-    }
-
-    // B: Try Direct RSS fetch (Fast, no middleware, direct Reddit server fetch)
-    try {
-      const directRssData = await fetchViaDirectRss(feedType);
-      if (directRssData && directRssData.length > 0) {
-        console.log('Successfully fetched feed via Direct RSS.');
-        return directRssData.slice(0, limit);
-      }
-    } catch (directRssError) {
-      console.warn('Direct RSS fetch failed, falling back to Proxied RSS:', directRssError);
-    }
-
-    // C: Try Proxied RSS fetch (uses corsproxy.io to pull Reddit RSS XML)
-    try {
-      const proxyRssData = await fetchViaProxyRss(feedType);
-      if (proxyRssData && proxyRssData.length > 0) {
-        console.log('Successfully fetched feed via Proxied RSS.');
-        return proxyRssData.slice(0, limit);
-      }
-    } catch (proxyRssError) {
-      console.warn('Proxied RSS fetch failed, falling back to rss2json converter:', proxyRssError);
-    }
-
-    // D: Try public RSS-to-JSON converter (Backup proxy API)
-    try {
-      const rssData = await fetchViaRss2Json(feedType);
-      if (rssData && rssData.length > 0) {
-        console.log('Successfully fetched feed via RSS converter.');
-        return rssData.slice(0, limit);
-      }
-    } catch (rssError) {
-      console.warn('RSS converter failed, falling back to public JSON proxies:', rssError);
-    }
-
-    // E: Fallback Proxy Chain (If everything else failed)
-    const fallbacks = [
-      { name: 'corsproxy.io', url: (target: string) => `https://corsproxy.io/?url=${encodeURIComponent(target)}` },
-      { name: 'allorigins.win', url: (target: string) => `https://api.allorigins.win/get?url=${encodeURIComponent(target)}` },
-      { name: 'direct-www', url: (target: string) => target },
-      { name: 'direct-old', url: (target: string) => target.replace('www.reddit.com', 'old.reddit.com') },
-    ];
-
-    let lastError: any = null;
-    const targetUrl = `https://www.reddit.com/r/FreeGameFindings/${feedType}.json?limit=${limit}&t=${Date.now()}`;
-
-    for (const source of fallbacks) {
-      try {
-        console.log(`Attempting to fetch Reddit feed via ${source.name}...`);
-        const fetchUrl = source.url(targetUrl);
-        const response = await fetch(fetchUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed with status ${response.status}`);
-        }
-
-        let rawData: any;
-        if (source.name === 'allorigins.win') {
-          const proxyResult = await response.json();
-          if (!proxyResult.contents) throw new Error('Proxy returned empty contents');
-          rawData = JSON.parse(proxyResult.contents);
-        } else {
-          rawData = await response.json();
-        }
-
-        return parseRedditJson(rawData);
-      } catch (error) {
-        console.warn(`Source ${source.name} failed:`, error);
-        lastError = error;
-      }
-    }
-
-    // F: Try GamerPower API as a final backup (No authentication, stable JSON output, native cover images)
-    try {
-      console.log('Reddit endpoints failed. Falling back to GamerPower API as backup...');
-      const gpData = await fetchViaGamerPower(feedType, limit);
-      if (gpData && gpData.length > 0) {
-        console.log('Successfully fetched feed via GamerPower API.');
-        return gpData;
-      }
-    } catch (gpError) {
-      console.warn('GamerPower fallback fetch failed:', gpError);
-      lastError = gpError;
-    }
-
-    throw lastError || new Error('All fetch methods failed');
+    const result = await fetchRedditPostsPaginated(feedType, limit);
+    return result.posts;
   } catch (error) {
-    console.error('Error in fetchFreeGameFindings:', error);
-    throw error;
+    console.error('[RedditService] Error in fetchFreeGameFindings wrapper:', error);
+    return [];
   }
+}
+
+/**
+ * Fetches merged feed of GamerPower (Primary) and Reddit (Supplemental) posts.
+ */
+export async function fetchMergedGameFeed(
+  feedType: 'hot' | 'new' = 'new',
+  limit: number = 30,
+  after?: string,
+  forceRefresh = false
+): Promise<{ deals: Deal[]; after?: string; gpFailed?: boolean }> {
+  let redditPosts: RedditPost[] = [];
+  let redditAfterCursor: string | undefined = undefined;
+  let gpDeals: Deal[] = [];
+  let gpFailed = false;
+
+  // 1. Fetch Reddit posts (subject to 5-minute client-side cooldown on page 1)
+  try {
+    const isPage1 = !after;
+    let useCache = false;
+
+    if (isPage1) {
+      const lastFetchStr = await AsyncStorage.getItem('reddit_last_fetch_timestamp');
+      const lastFetch = lastFetchStr ? Number(lastFetchStr) : 0;
+      const now = Date.now();
+      const cooldownMs = 5 * 60 * 1000; // 5 minutes
+
+      if (now - lastFetch < cooldownMs) {
+        useCache = true;
+      }
+    }
+
+    if (useCache) {
+      console.log('[RedditService] Reddit fetch is within 5-min cooldown. Loading from cache...');
+      const cachedStr = await AsyncStorage.getItem('reddit_posts_cache');
+      if (cachedStr) {
+        redditPosts = JSON.parse(cachedStr);
+      }
+    } else {
+      console.log('[RedditService] Fetching fresh Reddit posts...');
+      const redditResult = await fetchRedditPostsPaginated(feedType, limit, after);
+      redditPosts = redditResult.posts;
+      redditAfterCursor = redditResult.after;
+
+      if (isPage1 && redditPosts.length > 0) {
+        await AsyncStorage.setItem('reddit_posts_cache', JSON.stringify(redditPosts));
+        await AsyncStorage.setItem('reddit_last_fetch_timestamp', String(Date.now()));
+      }
+    }
+  } catch (err) {
+    console.warn('[RedditService] Supplemental Reddit fetch failed:', err);
+  }
+
+  // 2. Fetch GamerPower (Always fetch to merge and enrich with Reddit deals on every page)
+  try {
+    gpDeals = await fetchGamerPowerGiveaways(100, undefined, undefined, forceRefresh);
+  } catch (err) {
+    console.warn('[RedditService] Primary GamerPower fetch failed:', err);
+    gpFailed = true;
+  }
+
+  // Convert Reddit posts to basic Deals
+  const redditDeals = redditPosts.map(postToBasicDeal);
+
+  // Merge & Enrich (GamerPower first, supplemented/enriched by Reddit)
+  const uniqueDeals = mergeAndEnrichDeals(gpDeals, redditDeals);
+
+  return {
+    deals: uniqueDeals,
+    after: redditAfterCursor,
+    gpFailed,
+  };
 }
 
 /**
@@ -802,20 +539,12 @@ export async function fetchBotComment(postId: string, postTitle?: string): Promi
     return null;
   }
   
-  const targetUrl = `https://www.reddit.com/comments/${postId}/.rss`;
+  const targetUrl = `https://old.reddit.com/comments/${postId}/.rss`;
   
   try {
     console.log(`[RedditService] Fetching comments RSS for post ${postId} directly...`);
-    const response = await fetch(targetUrl, {
-      headers: {
-        'User-Agent': 'android:com.freegamefindings.app:v1.0.0 (by /u/freegamefindings)',
-      },
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Failed to fetch comments RSS: status ${response.status}`);
-    }
-    
+    // redditFetch handles 429 backoff – throws if rate-limited or unrecoverable
+    const response = await redditFetch(targetUrl);
     const xmlText = await response.text();
     return selectBestBotComment(xmlText, postTitle);
   } catch (error) {

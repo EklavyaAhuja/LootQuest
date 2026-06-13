@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { redditFetch } from './redditFetch';
 
 const CACHE_KEY = 'fgf_expired_post_ids';
 const CACHE_TIME_KEY = 'fgf_expired_post_ids_timestamp';
@@ -49,41 +50,33 @@ class ExpiredFeedService {
 
     this.isFetching = true;
     try {
-      console.log('[ExpiredFeedService] Fetching expired flair RSS feed...');
-      const url = `https://www.reddit.com/r/FreeGameFindings/search.rss?q=flair_name:%22Expired%22&restrict_sr=1&sort=new&t=${Date.now()}`;
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'android:com.freegamefindings.app:v1.0.0 (by /u/freegamefindings)',
-        },
-      });
+      console.log('[ExpiredFeedService] Fetching expired flair feed...');
+      const rssUrl = 'https://old.reddit.com/r/FreeGameFindings/search.rss?q=flair_name:%22Expired%22&restrict_sr=1&sort=new';
+      const response = await redditFetch(rssUrl);
 
-      if (response.ok) {
-        const xml = await response.text();
-        const entries = xml.split('<entry>');
-        entries.shift(); // remove XML header metadata
+      const xml = await response.text();
+      const entries = xml.split('<entry>');
+      entries.shift(); // remove XML header metadata
 
-        const ids: string[] = [];
-        for (const entry of entries) {
-          const idMatch = entry.match(/<id>([^<]+)<\/id>/);
-          if (idMatch) {
-            const cleanId = idMatch[1].replace('t3_', '').trim();
-            if (cleanId) {
-              ids.push(cleanId);
-            }
+      const ids: string[] = [];
+      for (const entry of entries) {
+        const idMatch = entry.match(/<id>([^<]+)<\/id>/);
+        if (idMatch) {
+          const cleanId = idMatch[1].replace('t3_', '').trim();
+          if (cleanId) {
+            ids.push(cleanId);
           }
         }
-
-        this.expiredIds = new Set(ids);
-        this.lastFetched = Date.now();
-
-        await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(ids));
-        await AsyncStorage.setItem(CACHE_TIME_KEY, String(this.lastFetched));
-        console.log(`[ExpiredFeedService] Successfully parsed and cached ${ids.length} expired post IDs.`);
-      } else {
-        console.warn(`[ExpiredFeedService] Failed to fetch expired feed: status ${response.status}`);
       }
+
+      this.expiredIds = new Set(ids);
+      this.lastFetched = Date.now();
+
+      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(ids));
+      await AsyncStorage.setItem(CACHE_TIME_KEY, String(this.lastFetched));
+      console.log(`[ExpiredFeedService] Successfully parsed and cached ${ids.length} expired post IDs.`);
     } catch (error) {
-      console.warn('[ExpiredFeedService] Error fetching expired feed:', error);
+      console.warn('[ExpiredFeedService] Fetch failed, using cached IDs:', error);
     } finally {
       this.isFetching = false;
     }
