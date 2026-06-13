@@ -18,6 +18,7 @@ interface AlertItem {
   actionType?: 'claim' | 'details';
   actionUrl?: string;
   isExpired?: boolean;
+  coverImage?: string;
 }
 
 const COVER_IMAGES = [
@@ -131,11 +132,11 @@ const RadarAnimation = () => {
       </Animated.View>
 
       {/* Target Blip Dots */}
-      <Animated.View style={[styles.dot, { left: dot1X, top: dot1Y, opacity: dotOpacity }]} />
-      <Animated.View style={[styles.dot, { left: dot2X, top: dot2Y, opacity: dotOpacity }]} />
-      <Animated.View style={[styles.dot, { left: dot3X, top: dot3Y, opacity: dotOpacity }]} />
-      <Animated.View style={[styles.dot, { left: dot4X, top: dot4Y, opacity: dotOpacity }]} />
-      <Animated.View style={[styles.dot, { left: dot5X, top: dot5Y, opacity: dotOpacity }]} />
+      <Animated.View style={[styles.dot, { transform: [{ translateX: dot1X }, { translateY: dot1Y }], opacity: dotOpacity }]} />
+      <Animated.View style={[styles.dot, { transform: [{ translateX: dot2X }, { translateY: dot2Y }], opacity: dotOpacity }]} />
+      <Animated.View style={[styles.dot, { transform: [{ translateX: dot3X }, { translateY: dot3Y }], opacity: dotOpacity }]} />
+      <Animated.View style={[styles.dot, { transform: [{ translateX: dot4X }, { translateY: dot4Y }], opacity: dotOpacity }]} />
+      <Animated.View style={[styles.dot, { transform: [{ translateX: dot5X }, { translateY: dot5Y }], opacity: dotOpacity }]} />
 
       {/* Center Circle Overlay (sits on top of the rotating sweep to cover the center) */}
       <Svg width={90} height={90} style={StyleSheet.absoluteFill}>
@@ -770,6 +771,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.8,
     shadowRadius: 3,
     elevation: 2,
+    top: 0,
+    left: 0,
   },
 });
 
