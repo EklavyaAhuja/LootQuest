@@ -28,6 +28,11 @@ const COVER_IMAGES = [
 
 export default function AlertsScreen() {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+
+  const handleImageError = (id: string) => {
+    setImageErrors(prev => ({ ...prev, [id]: true }));
+  };
 
   // Load alert logs and reset the unread alerts count
   useEffect(() => {
@@ -142,17 +147,24 @@ export default function AlertsScreen() {
               const isGog = alert.platform.toLowerCase().includes('gog');
               const isAnnouncement = alert.platform.toLowerCase().includes('announcement');
               const relativeTime = getRelativeTime(alert.timestamp);
-              const coverUri = getGameCover(alert.id);
+              const coverUri = alert.coverImage || getGameCover(alert.id);
               const progressPercent = alert.isExpired ? 100 : 30;
 
               return (
                 <View key={alert.id} style={[styles.alertCard, alert.isExpired && styles.alertCardExpired]}>
                   {/* Cover Image sitting on top */}
                   <View style={styles.cardImageContainer}>
-                    <Image 
-                      source={{ uri: coverUri }} 
-                      style={styles.cardImage} 
-                    />
+                    {(!imageErrors[alert.id] && coverUri) ? (
+                      <Image 
+                        source={{ uri: coverUri }} 
+                        style={styles.cardImage} 
+                        onError={() => handleImageError(alert.id)}
+                      />
+                    ) : (
+                      <View style={styles.cardImagePlaceholder}>
+                        <Text style={styles.placeholderIcon}>🎮</Text>
+                      </View>
+                    )}
                     <View style={styles.cardImageGradient} />
                   </View>
 
@@ -577,6 +589,16 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.bold,
     fontSize: 13,
     letterSpacing: 0.5,
+  },
+  cardImagePlaceholder: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#1e1b29',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placeholderIcon: {
+    fontSize: 32,
   },
 });
 

@@ -1,21 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, SafeAreaView, Platform, Modal, Pressable } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import {
-  useFonts,
-  Quicksand_500Medium,
-  Quicksand_600SemiBold,
-  Quicksand_700Bold,
-} from '@expo-google-fonts/quicksand';
-import {
-  DMSans_400Regular,
-  DMSans_500Medium,
-  DMSans_700Bold,
-} from '@expo-google-fonts/dm-sans';
-import {
-  SpaceMono_400Regular,
-  SpaceMono_700Bold,
-} from '@expo-google-fonts/space-mono';
+import { useFonts } from 'expo-font';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, FONTS } from './src/theme/theme';
@@ -25,31 +11,33 @@ import AlertsScreen from './src/screens/AlertsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import DetailScreen from './src/screens/DetailScreen';
 import { getClaimedPosts } from './src/services/storageService';
+import { postToBasicDeal } from './src/services/DealClassifier';
 import { Deal } from './src/models/Deal';
 import BouncyPressable from './src/components/BouncyPressable';
 import {
   requestNotificationPermissions,
   registerBackgroundFetch,
   seedInitialSeenPosts,
+  registerFCMToken,
 } from './src/services/notificationService';
 import { expiredFeedService } from './src/services/ExpiredFeedService';
 import { Home, Inbox, Bell, User, Settings, Gamepad2, WifiOff } from 'lucide-react-native';
+import HourglassLoader from './src/components/HourglassLoader';
 
 export default function App() {
   const [fontsLoaded] = useFonts({
-    Quicksand_500Medium,
-    Quicksand_600SemiBold,
-    Quicksand_700Bold,
-    DMSans_400Regular,
-    DMSans_500Medium,
-    DMSans_700Bold,
-    SpaceMono_400Regular,
-    SpaceMono_700Bold,
+    PlusJakartaSans_400Regular: require('@expo-google-fonts/plus-jakarta-sans/400Regular/PlusJakartaSans_400Regular.ttf'),
+    PlusJakartaSans_500Medium: require('@expo-google-fonts/plus-jakarta-sans/500Medium/PlusJakartaSans_500Medium.ttf'),
+    PlusJakartaSans_600SemiBold: require('@expo-google-fonts/plus-jakarta-sans/600SemiBold/PlusJakartaSans_600SemiBold.ttf'),
+    PlusJakartaSans_700Bold: require('@expo-google-fonts/plus-jakarta-sans/700Bold/PlusJakartaSans_700Bold.ttf'),
+    PlusJakartaSans_800ExtraBold: require('@expo-google-fonts/plus-jakarta-sans/800ExtraBold/PlusJakartaSans_800ExtraBold.ttf'),
+    SpaceMono_400Regular: require('@expo-google-fonts/space-mono/400Regular/SpaceMono_400Regular.ttf'),
+    SpaceMono_700Bold: require('@expo-google-fonts/space-mono/700Bold/SpaceMono_700Bold.ttf'),
   });
 
   const [activeTab, setActiveTab] = useState<'feed' | 'vault' | 'alerts' | 'settings'>('feed');
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
-  const [claimedPostIds, setClaimedPostIds] = useState<string[]>([]);
+  const [claimedDeals, setClaimedDeals] = useState<Deal[]>([]);
   const [unreadAlertsCount, setUnreadAlertsCount] = useState<number>(0);
   const [isOffline, setIsOffline] = useState<boolean>(false);
   const [retrying, setRetrying] = useState<boolean>(false);
@@ -78,7 +66,7 @@ export default function App() {
   const loadClaimedPosts = async () => {
     try {
       const claimed = await getClaimedPosts();
-      setClaimedPostIds(claimed.map(p => p.id));
+      setClaimedDeals(claimed.map(postToBasicDeal));
     } catch (e) {
       console.error('Error loading claimed posts:', e);
     }
@@ -102,6 +90,7 @@ export default function App() {
         console.log('Notifications permissions granted.');
         await seedInitialSeenPosts();
         await registerBackgroundFetch();
+        await registerFCMToken();
       }
 
       // Load initial unread count
@@ -162,7 +151,7 @@ export default function App() {
   if (!fontsLoaded) {
     return (
       <View style={styles.loadingContainer}>
-        <Text style={styles.loadingText}>BOOTING LOOTQUEST CORE...</Text>
+        <HourglassLoader />
       </View>
     );
   }
@@ -191,14 +180,14 @@ export default function App() {
         {activeTab === 'feed' && (
           <FeedScreen 
             onDealSelect={setSelectedDeal} 
-            claimedPostIds={claimedPostIds} 
+            claimedDeals={claimedDeals} 
             onNewAlerts={(count) => {
               setUnreadAlertsCount((prev) => prev + count);
             }}
             onConnectionError={() => setIsOffline(true)}
           />
         )}
-        {activeTab === 'vault' && <VaultScreen />}
+        {activeTab === 'vault' && <VaultScreen onDealSelect={setSelectedDeal} />}
         {activeTab === 'alerts' && <AlertsScreen />}
         {activeTab === 'settings' && <SettingsScreen />}
       </View>
@@ -210,11 +199,9 @@ export default function App() {
           onPress={() => handleTabChange('feed')}
           style={styles.tabBtn}
         >
-          <View style={[
-            styles.tabIconWrapper,
-            activeTab === 'feed' && styles.tabIconWrapperActive
-          ]}>
-            <Home size={24} color={activeTab === 'feed' ? COLORS.bg : '#888'} />
+          <View style={activeTab === 'feed' ? styles.tabIconWrapperActive : styles.tabIconWrapper}>
+            <Home size={22} color={activeTab === 'feed' ? COLORS.primary : COLORS.textMuted} />
+            <Text style={[styles.tabLabel, { color: activeTab === 'feed' ? COLORS.primary : COLORS.textMuted }]}>Home</Text>
           </View>
         </Pressable>
 
@@ -223,11 +210,9 @@ export default function App() {
           onPress={() => handleTabChange('vault')}
           style={styles.tabBtn}
         >
-          <View style={[
-            styles.tabIconWrapper,
-            activeTab === 'vault' && styles.tabIconWrapperActive
-          ]}>
-            <Inbox size={24} color={activeTab === 'vault' ? COLORS.bg : '#888'} />
+          <View style={activeTab === 'vault' ? styles.tabIconWrapperActive : styles.tabIconWrapper}>
+            <Inbox size={22} color={activeTab === 'vault' ? COLORS.primary : COLORS.textMuted} />
+            <Text style={[styles.tabLabel, { color: activeTab === 'vault' ? COLORS.primary : COLORS.textMuted }]}>Vault</Text>
           </View>
         </Pressable>
 
@@ -237,11 +222,9 @@ export default function App() {
           style={styles.tabBtn}
         >
           <View style={styles.alertTabContainer}>
-            <View style={[
-              styles.tabIconWrapper,
-              activeTab === 'alerts' && styles.tabIconWrapperActive
-            ]}>
-              <Bell size={24} color={activeTab === 'alerts' ? COLORS.bg : '#888'} />
+            <View style={activeTab === 'alerts' ? styles.tabIconWrapperActive : styles.tabIconWrapper}>
+              <Bell size={22} color={activeTab === 'alerts' ? COLORS.primary : COLORS.textMuted} />
+              <Text style={[styles.tabLabel, { color: activeTab === 'alerts' ? COLORS.primary : COLORS.textMuted }]}>Alerts</Text>
             </View>
             {/* Badge */}
             {unreadAlertsCount > 0 && (
@@ -257,11 +240,9 @@ export default function App() {
           onPress={() => handleTabChange('settings')}
           style={styles.tabBtn}
         >
-          <View style={[
-            styles.tabIconWrapper,
-            activeTab === 'settings' && styles.tabIconWrapperActive
-          ]}>
-            <User size={24} color={activeTab === 'settings' ? COLORS.bg : '#888'} />
+          <View style={activeTab === 'settings' ? styles.tabIconWrapperActive : styles.tabIconWrapper}>
+            <User size={22} color={activeTab === 'settings' ? COLORS.primary : COLORS.textMuted} />
+            <Text style={[styles.tabLabel, { color: activeTab === 'settings' ? COLORS.primary : COLORS.textMuted }]}>Settings</Text>
           </View>
         </Pressable>
       </View>
@@ -331,13 +312,18 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: COLORS.bg,
     borderBottomWidth: 1,
-    borderColor: '#334155',
-    paddingHorizontal: 16,
+    borderColor: COLORS.border,
+    paddingHorizontal: 20,
     paddingVertical: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     height: 64,
+    shadowColor: '#a855f7',
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.15,
+    shadowRadius: 40,
+    elevation: 8,
   },
   headerIconBtn: {
     width: 38,
@@ -354,10 +340,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   headerText: {
-    fontFamily: FONTS.bold,
-    fontSize: 24,
+    fontFamily: FONTS.extraBold,
+    fontSize: 28,
     color: COLORS.primary,
-    letterSpacing: 1,
+    letterSpacing: -1,
     textAlign: 'center',
   },
   content: {
@@ -365,39 +351,46 @@ const styles = StyleSheet.create({
   },
   tabBar: {
     flexDirection: 'row',
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.surfaceLowest,
     borderTopWidth: 1,
-    borderColor: '#334155',
+    borderColor: COLORS.border,
     paddingHorizontal: 16,
     height: 80,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     alignItems: 'center',
     justifyContent: 'space-around',
-    shadowColor: COLORS.shadow,
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 30,
     elevation: 8,
   },
   tabBtn: {
-    height: 48,
+    height: 64,
     justifyContent: 'center',
     alignItems: 'center',
     flex: 1,
   },
   tabIconWrapper: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    overflow: 'hidden',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 16,
   },
   tabIconWrapperActive: {
-    backgroundColor: COLORS.accent,
+    backgroundColor: 'rgba(183, 109, 255, 0.2)',
     borderRadius: 24,
-    overflow: 'hidden',
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabLabel: {
+    fontSize: 11,
+    fontFamily: FONTS.headlineMedium,
+    marginTop: 2,
+    fontWeight: '600',
   },
   alertTabContainer: {
     position: 'relative',

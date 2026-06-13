@@ -8,9 +8,9 @@ import {
   Switch,
   Alert,
   Platform,
+  TouchableOpacity,
 } from 'react-native';
-import { COLORS, FONTS } from '../theme/theme';
-import BouncyPressable from '../components/BouncyPressable';
+import { COLORS, FONTS, getPlatformColor } from '../theme/theme';
 import {
   getAppSettings,
   saveAppSettings,
@@ -20,23 +20,31 @@ import {
   registerBackgroundFetch,
   unregisterBackgroundFetch,
 } from '../services/notificationService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Bell,
-  Sparkles,
+  Clock,
+  SlidersHorizontal,
+  MessageCircle,
+  Check,
+  Gamepad2,
 } from 'lucide-react-native';
+import StoreIcon from '../components/StoreIcon';
 
 const ALL_PLATFORMS = ['Steam', 'Epic Games', 'GOG', 'itch.io', 'Playstation', 'Xbox'];
-const ALL_TYPES = ['Game', 'DLC', 'Beta'];
+const ALL_TYPES = [
+  { key: 'Game', label: 'Full Games' },
+  { key: 'DLC', label: 'DLCs' },
+  { key: 'Beta', label: 'Betas' },
+];
+const INTERVALS = [
+  { mins: 15, label: 'Every 15 Minutes' },
+  { mins: 30, label: 'Every 30 Minutes' },
+  { mins: 60, label: 'Every 1 Hour' },
+];
 
 export default function SettingsScreen() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
-
-  // Custom feedback states
-  const [suggestion, setSuggestion] = useState('');
   const [feedback, setFeedback] = useState('');
-
-
 
   useEffect(() => {
     const loadData = async () => {
@@ -45,21 +53,6 @@ export default function SettingsScreen() {
     };
     loadData();
   }, []);
-
-
-
-  const handleToggleNotifications = async (val: boolean) => {
-    if (!settings) return;
-    const updated = { ...settings, notificationsEnabled: val };
-    setSettings(updated);
-    await saveAppSettings(updated);
-    
-    if (val) {
-      await registerBackgroundFetch();
-    } else {
-      await unregisterBackgroundFetch();
-    }
-  };
 
   const handlePlatformToggle = async (plat: string) => {
     if (!settings) return;
@@ -72,7 +65,6 @@ export default function SettingsScreen() {
     const updated = { ...settings, notificationPlatforms: plats };
     setSettings(updated);
     await saveAppSettings(updated);
-    
     if (settings.notificationsEnabled) {
       await registerBackgroundFetch();
     }
@@ -89,7 +81,6 @@ export default function SettingsScreen() {
     const updated = { ...settings, notificationTypes: types };
     setSettings(updated);
     await saveAppSettings(updated);
-    
     if (settings.notificationsEnabled) {
       await registerBackgroundFetch();
     }
@@ -100,85 +91,49 @@ export default function SettingsScreen() {
     const updated = { ...settings, backgroundIntervalMinutes: mins };
     setSettings(updated);
     await saveAppSettings(updated);
-    
     if (settings.notificationsEnabled) {
       await registerBackgroundFetch();
     }
   };
 
-
-
   const handleSubmitFeedback = async () => {
-    const suggestionText = suggestion.trim();
-    const feedbackText = feedback.trim();
-
-    if (!suggestionText && !feedbackText) {
-      Alert.alert('Empty Transmission', 'Please enter a suggestion or feedback before sending.');
+    const text = feedback.trim();
+    if (!text) {
+      Alert.alert('Empty', 'Please enter some feedback before sending.');
       return;
     }
-
     const webhookUrl = process.env.EXPO_PUBLIC_DISCORD_WEBHOOK_URL;
     if (!webhookUrl || webhookUrl === 'your_discord_webhook_url_here') {
-      Alert.alert(
-        'Webhook Offline 📡',
-        'Feedback transmission channel is not configured on this build yet. Thank you for testing!'
-      );
-      setSuggestion('');
+      Alert.alert('Thanks!', 'Feedback channel is not yet configured on this build. Thank you for testing!');
       setFeedback('');
       return;
     }
-
     try {
       const response = await fetch(webhookUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          embeds: [
-            {
-              title: '📡 New Transmission: LootQuest Feedback',
-              color: 3788564, // Decimal color for neon green (#39FF14)
-              fields: [
-                {
-                  name: '💡 Suggestion',
-                  value: suggestionText || '*None provided*',
-                },
-                {
-                  name: '💬 General Feedback',
-                  value: feedbackText || '*None provided*',
-                },
-                {
-                  name: '📱 Client Info',
-                  value: `${Platform.OS.toUpperCase()} (OS Version: ${Platform.Version})`,
-                },
-              ],
-              timestamp: new Date().toISOString(),
-            },
-          ],
+          embeds: [{
+            title: '📡 New Feedback: LootQuest',
+            color: 3788564,
+            fields: [
+              { name: '💬 Feedback', value: text },
+              { name: '📱 Client', value: `${Platform.OS.toUpperCase()} (v${Platform.Version})` },
+            ],
+            timestamp: new Date().toISOString(),
+          }],
         }),
       });
-
       if (response.ok) {
-        Alert.alert(
-          'Transmission Received! 📡',
-          'Your feedback and suggestion have been logged directly with the creator. Thank you for your input!'
-        );
-        setSuggestion('');
+        Alert.alert('Received! 📡', 'Your feedback has been logged. Thank you!');
         setFeedback('');
       } else {
-        throw new Error(`Response status: ${response.status}`);
+        throw new Error(`Status: ${response.status}`);
       }
     } catch (e) {
-      console.error('Error sending feedback to Discord:', e);
-      Alert.alert(
-        'Transmission Failed ❌',
-        'Could not complete transmission. Please check your network connection and try again.'
-      );
+      Alert.alert('Failed ❌', 'Could not send feedback. Check your connection.');
     }
   };
-
-
 
   if (!settings) {
     return (
@@ -190,174 +145,163 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
-      {/* Personalized Greeting Card */}
-      <View style={styles.greetingCard}>
-        <Sparkles size={22} color={COLORS.primary} style={styles.sparklesIcon} />
-        <Text style={styles.greetingTitle}>ABOUT LOOTQUEST</Text>
-        <Text style={styles.greetingText}>
-          Thank you for checking out LootQuest.{"\n\n"}
-          This app started as a small side project after I got tired of constantly checking different sites and Reddit threads for free games, only to discover I had missed a giveaway by a few hours.{"\n\n"}
-          What began as a simple experiment slowly turned into something much bigger: a tool designed to make discovering, tracking, and claiming free games easier.{"\n\n"}
-          LootQuest is built and maintained independently, and every feature, improvement, and bug fix comes from a genuine desire to create something useful for fellow gamers.{"\n\n"}
-          If this app helped you discover even one great game you would have otherwise missed, then it has already achieved its purpose.{"\n\n"}
-          Thank you for being part of the journey.{"\n\n"}
-          Happy hunting,{"\n\n"}
-          <Text style={styles.signatureText}>The LootQuest Creator</Text>
-        </Text>
-      </View>
 
-      {/* Suggestion & Feedback Section */}
-      <View style={styles.feedbackFormCard}>
-        <Text style={styles.formHeader}>TRANSMIT FEEDBACK</Text>
-
-        <View style={styles.formGroup}>
-          <Text style={styles.formLabel}>Suggestion:</Text>
-          <TextInput
-            placeholder="e.g. Add search by tags, notification history filters..."
-            placeholderTextColor="#64748b"
-            style={styles.textInput}
-            value={suggestion}
-            onChangeText={setSuggestion}
-            multiline
-            numberOfLines={3}
-          />
+      {/* ── Alerts Card ── */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={[styles.headerIconCircle, { borderColor: COLORS.primary }]}>
+            <Bell size={15} color={COLORS.primary} />
+          </View>
+          <Text style={styles.cardTitle}>Alerts</Text>
         </View>
 
-        <View style={styles.formGroup}>
-          <Text style={styles.formLabel}>Feedback:</Text>
-          <TextInput
-            placeholder="Tell us what you like or how we can improve..."
-            placeholderTextColor="#64748b"
-            style={styles.textInput}
-            value={feedback}
-            onChangeText={setFeedback}
-            multiline
-            numberOfLines={3}
-          />
-        </View>
-
-        <BouncyPressable
-          onPress={handleSubmitFeedback}
-          backgroundColor={COLORS.primary}
-          borderRadius={12}
-          shadowOffsetSize={3}
-          style={styles.submitBtn}
-          contentStyle={styles.submitBtnContent}
-        >
-          <Text style={styles.submitBtnText}>SEND TRANSMISSION</Text>
-        </BouncyPressable>
-      </View>
-
-      <Text style={styles.sectionHeading}>SYSTEM PREFERENCES</Text>
-
-      <View style={styles.settingsList}>
-        {/* Notifications Preference Card */}
-        <View style={styles.preferencesWrapper}>
-          <View style={styles.staticCardContainer}>
-            <View style={styles.drawerCardContent}>
-              <View style={styles.drawerCardLeft}>
-                <View style={styles.bellIconCircle}>
-                  <Bell size={18} color="#00e3fd" />
-                </View>
-                <View style={styles.drawerCardText}>
-                  <Text style={styles.drawerCardTitle}>Notification Preferences</Text>
-                  <Text style={styles.drawerCardSub}>Loot alerts & system pings</Text>
-                </View>
+        {ALL_PLATFORMS.map((p, idx) => {
+          const isEnabled = settings.notificationPlatforms.includes(p);
+          const bgColor = getPlatformColor(p);
+          const isLast = idx === ALL_PLATFORMS.length - 1;
+          return (
+            <View key={p} style={[styles.listRow, !isLast && styles.listRowBorder]}>
+              <View style={[styles.platformIconBg, { backgroundColor: bgColor }]}>
+                <StoreIcon platform={p} size={14} color="#fff" />
               </View>
+              <Text style={styles.listRowLabel}>{p}</Text>
+              <Switch
+                value={isEnabled}
+                onValueChange={() => handlePlatformToggle(p)}
+                trackColor={{ false: 'rgba(255,255,255,0.08)', true: COLORS.primary }}
+                thumbColor={
+                  Platform.OS === 'android'
+                    ? isEnabled ? COLORS.bg : '#888'
+                    : undefined
+                }
+              />
             </View>
+          );
+        })}
+      </View>
 
-            <View style={styles.notificationsDrawerContent}>
-              <View style={styles.toggleRow}>
-                <Text style={styles.toggleLabel}>Enable Notifications</Text>
-                <Switch
-                  value={settings.notificationsEnabled}
-                  onValueChange={handleToggleNotifications}
-                  trackColor={{ false: '#d0c8be', true: COLORS.success }}
-                  thumbColor={COLORS.white}
-                />
+      {/* ── Scan Frequency Card ── */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={[styles.headerIconCircle, { borderColor: COLORS.secondary }]}>
+            <Clock size={15} color={COLORS.secondary} />
+          </View>
+          <Text style={styles.cardTitle}>Scan Frequency</Text>
+        </View>
+
+        {INTERVALS.map(({ mins, label }, idx) => {
+          const isSelected = settings.backgroundIntervalMinutes === mins;
+          const isLast = idx === INTERVALS.length - 1;
+          return (
+            <TouchableOpacity
+              key={mins}
+              style={[styles.listRow, !isLast && styles.listRowBorder]}
+              onPress={() => handleIntervalChange(mins)}
+              activeOpacity={0.7}
+            >
+              {/* Custom radio circle */}
+              <View style={[styles.radioOuter, isSelected && styles.radioOuterActive]}>
+                {isSelected && <View style={styles.radioInner} />}
               </View>
+              <Text style={[styles.listRowLabel, isSelected && styles.listRowLabelActive]}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
-              {settings.notificationsEnabled && (
-                <View style={styles.subSettings}>
-                  <Text style={styles.subLabel}>Target Platforms:</Text>
-                  <View style={styles.buttonGrid}>
-                    {ALL_PLATFORMS.map(p => {
-                      const isSelected = settings.notificationPlatforms.includes(p);
-                      return (
-                        <BouncyPressable
-                          key={p}
-                          onPress={() => handlePlatformToggle(p)}
-                          backgroundColor={isSelected ? COLORS.primary : '#1e293b'}
-                          borderRadius={10}
-                          shadowOffsetSize={0}
-                          style={styles.gridBtn}
-                          contentStyle={[styles.gridBtnContent, !isSelected && { borderWidth: 1, borderColor: '#334155' }]}
-                        >
-                          <Text style={[styles.gridText, isSelected && { color: COLORS.border, fontFamily: FONTS.bold }]}>
-                            {p}
-                          </Text>
-                        </BouncyPressable>
-                      );
-                    })}
-                  </View>
+      {/* ── Content Filters Card ── */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={[styles.headerIconCircle, { borderColor: COLORS.success }]}>
+            <SlidersHorizontal size={15} color={COLORS.success} />
+          </View>
+          <Text style={styles.cardTitle}>Content Filters</Text>
+        </View>
 
-                  <Text style={styles.subLabel}>Content Types:</Text>
-                  <View style={styles.buttonGrid}>
-                    {ALL_TYPES.map(t => {
-                      const isSelected = settings.notificationTypes.includes(t);
-                      return (
-                        <BouncyPressable
-                          key={t}
-                          onPress={() => handleTypeToggle(t)}
-                          backgroundColor={isSelected ? COLORS.secondary : '#1e293b'}
-                          borderRadius={10}
-                          shadowOffsetSize={0}
-                          style={styles.gridBtn}
-                          contentStyle={[styles.gridBtnContent, !isSelected && { borderWidth: 1, borderColor: '#334155' }]}
-                        >
-                          <Text style={[styles.gridText, isSelected && { color: COLORS.border, fontFamily: FONTS.bold }]}>
-                            {t}
-                          </Text>
-                        </BouncyPressable>
-                      );
-                    })}
-                  </View>
+        <Text style={styles.filterSublabel}>CONTENT TYPE</Text>
 
-                  <Text style={styles.subLabel}>Scan Frequency:</Text>
-                  <View style={styles.intervalGrid}>
-                    {[15, 30, 60].map(mins => {
-                      const isSelected = settings.backgroundIntervalMinutes === mins;
-                      return (
-                        <BouncyPressable
-                          key={mins}
-                          onPress={() => handleIntervalChange(mins)}
-                          backgroundColor={isSelected ? COLORS.success : '#1e293b'}
-                          borderRadius={10}
-                          shadowOffsetSize={0}
-                          style={styles.intervalBtn}
-                          contentStyle={[styles.intervalBtnContent, !isSelected && { borderWidth: 1, borderColor: '#334155' }]}
-                        >
-                          <Text style={[styles.gridText, isSelected && { color: COLORS.white, fontFamily: FONTS.bold }]}>
-                            Every {mins}m
-                          </Text>
-                        </BouncyPressable>
-                      );
-                    })}
-                  </View>
+        {ALL_TYPES.map(({ key, label }, idx) => {
+          const isChecked = settings.notificationTypes.includes(key);
+          const isLast = idx === ALL_TYPES.length - 1;
+          return (
+            <TouchableOpacity
+              key={key}
+              style={[styles.listRow, !isLast && styles.listRowBorder]}
+              onPress={() => handleTypeToggle(key)}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.checkbox, isChecked && styles.checkboxChecked]}>
+                {isChecked && <Check size={10} color={COLORS.bg} />}
+              </View>
+              <Text style={[styles.listRowLabel, isChecked && styles.listRowLabelActive]}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
+      {/* ── Send Feedback Card ── */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={[styles.headerIconCircle, { borderColor: '#a855f7' }]}>
+            <MessageCircle size={15} color="#a855f7" />
+          </View>
+          <Text style={styles.cardTitle}>Send Feedback</Text>
+        </View>
 
-                </View>
-              )}
+        <TextInput
+          style={styles.feedbackInput}
+          placeholder={"Got an idea to improve LootQuest?\nFound a bug? Let us know!"}
+          placeholderTextColor={COLORS.textMuted}
+          value={feedback}
+          onChangeText={setFeedback}
+          multiline
+          numberOfLines={4}
+          textAlignVertical="top"
+        />
+
+        <TouchableOpacity
+          style={styles.submitBtn}
+          onPress={handleSubmitFeedback}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.submitText}>Submit Feedback</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ── Developer's Note Card ── */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={[styles.headerIconCircle, { borderColor: COLORS.secondary }]}>
+            <Gamepad2 size={15} color={COLORS.secondary} />
+          </View>
+          <Text style={styles.cardTitle}>Developer's Note</Text>
+        </View>
+        <View style={styles.devNoteContent}>
+          <Text style={styles.devNoteParagraph}>
+            LootQuest started as a simple personal project to help me track and alert myself about free game giveaways. Over time, it evolved into this full-fledged app aggregating deals across multiple platforms in real time.
+          </Text>
+          <Text style={styles.devNoteParagraph}>
+            I hope you like it! Feedback is appreciated and shit, so feel free to use the form above to let me know what you think.
+          </Text>
+          <View style={styles.signatureContainer}>
+            <Text style={styles.signatureLabel}>Made with ❤️ </Text>
+            <View style={styles.highlightedName}>
+              <Text style={styles.highlightedNameText}>by Eklavya Ahuja</Text>
             </View>
           </View>
         </View>
       </View>
 
-      {/* Version Footer */}
+      {/* ── Version Footer ── */}
       <View style={styles.versionFooter}>
-        <Text style={styles.versionAppName}>LootQuest</Text>
-        <Text style={styles.versionText}>v1.0.0</Text>
+        <Text style={styles.versionAppName}>LOOTQUEST</Text>
+        <Text style={styles.versionText}>Version 1.4.2 (Beta)</Text>
       </View>
+
     </ScrollView>
   );
 }
@@ -369,8 +313,8 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 40,
-    gap: 16,
+    paddingBottom: 48,
+    gap: 12,
   },
   center: {
     flex: 1,
@@ -383,223 +327,200 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: COLORS.text,
   },
-  greetingCard: {
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 24,
-    padding: 20,
-  },
-  greetingTitle: {
-    fontFamily: FONTS.bold,
-    fontSize: 18,
-    color: COLORS.primary,
-    marginBottom: 12,
-    letterSpacing: 0.5,
-    textAlign: 'center',
-  },
-  greetingText: {
-    fontFamily: FONTS.medium,
-    fontSize: 14,
-    color: COLORS.text,
-    textAlign: 'left',
-    lineHeight: 21,
-  },
-  sparklesIcon: {
-    marginBottom: 8,
-    alignSelf: 'center',
-  },
-  signatureText: {
-    fontFamily: FONTS.bold,
-    color: COLORS.primary,
-  },
-  feedbackFormCard: {
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 24,
-    padding: 20,
-    gap: 16,
-  },
-  formHeader: {
-    fontFamily: FONTS.mono,
-    fontSize: 12,
-    color: '#64748b',
-    letterSpacing: 1,
-    marginBottom: 4,
-  },
-  formGroup: {
-    gap: 6,
-  },
-  formLabel: {
-    fontFamily: FONTS.bold,
-    fontSize: 14,
-    color: COLORS.text,
-  },
-  textInput: {
-    borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: COLORS.bg,
-    color: COLORS.text,
-    fontFamily: FONTS.medium,
-    fontSize: 14,
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  submitBtn: {
-    width: '100%',
-    height: 48,
-    marginTop: 8,
-  },
-  submitBtnContent: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    height: 48,
-    borderRadius: 12,
-  },
-  submitBtnText: {
-    fontFamily: FONTS.bold,
-    fontSize: 16,
-    color: COLORS.bg,
-    letterSpacing: 0.5,
-  },
-  sectionHeading: {
-    fontFamily: FONTS.mono,
-    fontSize: 12,
-    color: '#64748b',
-    letterSpacing: 1,
-    marginTop: 8,
-    paddingHorizontal: 4,
-  },
-  settingsList: {
-    gap: 12,
-  },
-  preferencesWrapper: {
-    width: '100%',
-  },
-  staticCardContainer: {
-    width: '100%',
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: '#334155',
+
+  // Card shell
+  card: {
+    backgroundColor: COLORS.surfaceCharcoal,
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
     overflow: 'hidden',
   },
-  drawerCardContent: {
+
+  // Card header row
+  cardHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 13,
+    paddingBottom: 11,
     borderBottomWidth: 1,
-    borderColor: '#334155',
+    borderBottomColor: 'rgba(255,255,255,0.06)',
   },
-  drawerCardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  bellIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(0, 227, 253, 0.05)',
+  headerIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#00e3fd',
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
   },
-  drawerCardText: {
-    justifyContent: 'center',
-  },
-  drawerCardTitle: {
-    fontFamily: FONTS.bold,
-    fontSize: 16,
-    color: COLORS.text,
-    marginBottom: 2,
-  },
-  drawerCardSub: {
-    fontFamily: FONTS.medium,
-    fontSize: 13,
-    color: '#64748b',
-  },
-  notificationsDrawerContent: {
-    backgroundColor: COLORS.white,
-    padding: 16,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderColor: '#334155',
-    marginBottom: 12,
-  },
-  toggleLabel: {
+  cardTitle: {
     fontFamily: FONTS.bold,
     fontSize: 15,
     color: COLORS.text,
   },
-  subSettings: {
+
+  // Generic list row (used for Alerts, Frequency, Filters)
+  listRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 11,
     gap: 12,
   },
-  subLabel: {
-    fontFamily: FONTS.bold,
+  listRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  listRowLabel: {
+    flex: 1,
+    fontFamily: FONTS.medium,
     fontSize: 14,
+    color: COLORS.textMuted,
+  },
+  listRowLabelActive: {
     color: COLORS.text,
-    marginTop: 4,
+    fontFamily: FONTS.bold,
   },
-  buttonGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  gridBtn: {
-    minWidth: 80,
-  },
-  gridBtnContent: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+
+  // Platform icon background square
+  platformIconBg: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 10,
   },
-  gridText: {
+
+  // Radio button (Scan Frequency)
+  radioOuter: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: COLORS.textMuted,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  radioOuterActive: {
+    borderColor: COLORS.primary,
+  },
+  radioInner: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.primary,
+  },
+
+  // Checkbox (Content Filters)
+  filterSublabel: {
+    fontFamily: FONTS.bold,
+    fontSize: 10,
+    color: COLORS.textMuted,
+    letterSpacing: 1.2,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 4,
+  },
+  checkbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: COLORS.textMuted,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+
+  // Feedback card
+  feedbackInput: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    color: COLORS.text,
     fontFamily: FONTS.medium,
     fontSize: 13,
-    color: COLORS.text,
+    minHeight: 80,
   },
-  intervalGrid: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  intervalBtn: {
-    flex: 1,
-  },
-  intervalBtnContent: {
-    paddingVertical: 10,
+  submitBtn: {
+    marginHorizontal: 16,
+    marginBottom: 14,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary,
+    paddingVertical: 13,
     alignItems: 'center',
-    borderRadius: 10,
   },
+  submitText: {
+    fontFamily: FONTS.bold,
+    fontSize: 15,
+    color: COLORS.bg,
+    letterSpacing: 0.2,
+  },
+
+  // Footer
   versionFooter: {
     alignItems: 'center',
-    paddingVertical: 28,
+    paddingVertical: 20,
     gap: 4,
   },
   versionAppName: {
     fontFamily: FONTS.bold,
-    fontSize: 18,
-    color: COLORS.primary,
+    fontSize: 12,
+    color: COLORS.textMuted,
     letterSpacing: 2,
   },
   versionText: {
-    fontFamily: FONTS.mono,
-    fontSize: 12,
-    color: '#475569',
-    letterSpacing: 1,
+    fontFamily: FONTS.medium,
+    fontSize: 11,
+    color: COLORS.textMuted,
+    letterSpacing: 0.4,
   },
-
+  devNoteContent: {
+    padding: 16,
+    gap: 12,
+  },
+  devNoteParagraph: {
+    fontFamily: FONTS.medium,
+    fontSize: 13,
+    color: COLORS.textMuted,
+    lineHeight: 18,
+  },
+  signatureContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    flexWrap: 'wrap',
+  },
+  signatureLabel: {
+    fontFamily: FONTS.bold,
+    fontSize: 12,
+    color: COLORS.textMuted,
+  },
+  highlightedName: {
+    backgroundColor: 'rgba(57, 255, 20, 0.08)',
+    borderWidth: 1.5,
+    borderColor: '#39ff14',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  highlightedNameText: {
+    fontFamily: FONTS.bold,
+    fontSize: 12,
+    color: '#39ff14',
+    letterSpacing: 0.5,
+  },
 });
-

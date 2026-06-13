@@ -6,6 +6,7 @@ import {
   ScrollView,
   Image,
   Alert,
+  Pressable,
 } from 'react-native';
 import { COLORS, FONTS } from '../theme/theme';
 import BouncyPressable from '../components/BouncyPressable';
@@ -16,6 +17,59 @@ import * as WebBrowser from 'expo-web-browser';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { dealEnrichmentService } from '../services/DealEnrichmentService';
 import { postToBasicDeal } from '../services/DealClassifier';
+import { Deal } from '../models/Deal';
+import StoreIcon from '../components/StoreIcon';
+
+// Helper to extract Steam App ID from URL
+function extractSteamAppId(url?: string): string | null {
+  if (!url) return null;
+  const match = url.match(/\/app\/(\d+)/i);
+  return match ? match[1] : null;
+}
+
+// Helper to parse price string to number
+function parsePriceToNumber(priceStr?: string | null): number {
+  if (!priceStr) return 0;
+  let normalized = priceStr.trim();
+  // Handle European comma decimal versus US comma thousands separator
+  if (normalized.includes(',') && !normalized.includes('.')) {
+    normalized = normalized.replace(',', '.');
+  } else if (normalized.includes(',')) {
+    normalized = normalized.replace(/,/g, '');
+  }
+  const match = normalized.match(/\d+(?:\.\d+)?/);
+  if (match) {
+    const price = parseFloat(match[0]);
+    return isNaN(price) ? 0 : price;
+  }
+  return 0;
+}
+
+// Fetch original price directly from Steam store API without discount (force USD using &cc=us)
+async function fetchSteamOriginalPrice(appId: string): Promise<string | null> {
+  try {
+    const url = `https://store.steampowered.com/api/appdetails?appids=${appId}&filters=price_overview&cc=us`;
+    console.log(`[VaultScreen] Fetching Steam price for App ID: ${appId}`);
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const appData = data[appId];
+    if (appData && appData.success && appData.data?.price_overview) {
+      const priceOverview = appData.data.price_overview;
+      // Get formatted initial price (original price before discount)
+      if (priceOverview.initial_formatted) {
+        return priceOverview.initial_formatted;
+      }
+      // Fallback: use initial (in cents)
+      if (typeof priceOverview.initial === 'number') {
+        return `$${(priceOverview.initial / 100).toFixed(2)}`;
+      }
+    }
+  } catch (e) {
+    console.warn(`[VaultScreen] Failed to fetch Steam price for App ID ${appId}:`, e);
+  }
+  return null;
+}
 
 // Fallback cover images for claimed posts
 const COVER_IMAGES = [
@@ -25,9 +79,13 @@ const COVER_IMAGES = [
   'https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=600&q=80',
 ];
 
-export default function VaultScreen() {
-  const [claimedGames, setClaimedGames] = useState<RedditPost[]>([]);
-  const [trackedGames, setTrackedGames] = useState<RedditPost[]>([]);
+interface VaultScreenProps {
+  onDealSelect?: (deal: Deal) => void;
+}
+
+export default function VaultScreen({ onDealSelect }: VaultScreenProps) {
+  const [claimedGames, setClaimedGames] = useState<Deal[]>([]);
+  const [trackedGames, setTrackedGames] = useState<Deal[]>([]);
   const [filter, setFilter] = useState<'all' | 'claimed' | 'tracking'>('all');
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
 
@@ -40,27 +98,55 @@ export default function VaultScreen() {
   const loadData = async () => {
     const claimed = await getClaimedPosts();
     const tracked = await getTrackedPosts();
-    setClaimedGames(claimed);
-    setTrackedGames(tracked);
 
     const claimedDeals = claimed.map(postToBasicDeal);
     const trackedDeals = tracked.map(postToBasicDeal);
 
+    setClaimedGames(claimedDeals);
+    setTrackedGames(trackedDeals);
+
+    // Background fetch for any Steam games missing prices
+    const fetchMissingSteamPrices = async (deals: Deal[], setter: React.Dispatch<React.SetStateAction<Deal[]>>) => {
+      for (const deal of deals) {
+        if (!deal.originalPrice && !deal.worth) {
+          const appId = extractSteamAppId(deal.url);
+          if (appId) {
+            const price = await fetchSteamOriginalPrice(appId);
+            if (price) {
+              setter((prev) =>
+                prev.map((d) =>
+                  d.id === deal.id
+                    ? { ...d, originalPrice: price, worth: price }
+                    : d
+                )
+              );
+            }
+          }
+        }
+      }
+    };
+
+    fetchMissingSteamPrices(claimedDeals, setClaimedGames);
+    fetchMissingSteamPrices(trackedDeals, setTrackedGames);
+
     dealEnrichmentService.reset();
-    dealEnrichmentService.enrichDeals([...claimedDeals, ...trackedDeals], (updatedDeal) => {
+    dealEnrichmentService.enrichDeals([...claimedDeals, ...trackedDeals], async (updatedDeal) => {
+      let finalDeal = updatedDeal;
+      if (!finalDeal.originalPrice && !finalDeal.worth) {
+        const appId = extractSteamAppId(finalDeal.url);
+        if (appId) {
+          const price = await fetchSteamOriginalPrice(appId);
+          if (price) {
+            finalDeal = { ...finalDeal, originalPrice: price, worth: price };
+          }
+        }
+      }
+
       setClaimedGames((prev) =>
-        prev.map((p) =>
-          p.id === updatedDeal.id
-            ? ({ ...p, coverImage: updatedDeal.image, cleanTitle: updatedDeal.title } as any)
-            : p
-        )
+        prev.map((d) => (d.id === finalDeal.id ? finalDeal : d))
       );
       setTrackedGames((prev) =>
-        prev.map((p) =>
-          p.id === updatedDeal.id
-            ? ({ ...p, coverImage: updatedDeal.image, cleanTitle: updatedDeal.title } as any)
-            : p
-        )
+        prev.map((d) => (d.id === finalDeal.id ? finalDeal : d))
       );
     });
   };
@@ -101,12 +187,12 @@ export default function VaultScreen() {
 
   // Combine lists based on active filter
   const displayedItems = (() => {
-    const list: { post: RedditPost; status: 'CLAIMED' | 'TRACKING' }[] = [];
+    const list: { deal: Deal; status: 'CLAIMED' | 'TRACKING' }[] = [];
     if (filter === 'all' || filter === 'claimed') {
-      claimedGames.forEach((p) => list.push({ post: p, status: 'CLAIMED' }));
+      claimedGames.forEach((d) => list.push({ deal: d, status: 'CLAIMED' }));
     }
     if (filter === 'all' || filter === 'tracking') {
-      trackedGames.forEach((p) => list.push({ post: p, status: 'TRACKING' }));
+      trackedGames.forEach((d) => list.push({ deal: d, status: 'TRACKING' }));
     }
     return list;
   })();
@@ -120,9 +206,27 @@ export default function VaultScreen() {
     return COVER_IMAGES[sum % COVER_IMAGES.length];
   };
 
+  const totalClaimedValue = claimedGames.reduce((sum, deal) => {
+    const priceStr = deal.originalPrice || deal.worth;
+    return sum + parsePriceToNumber(priceStr);
+  }, 0);
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Stats Header */}
+        <View style={styles.statsContainer}>
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>CLAIMED LOOT</Text>
+            <Text style={styles.statValueClaimed}>{claimedGames.length}</Text>
+          </View>
+          <View style={styles.statDivider} />
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>TOTAL VALUE</Text>
+            <Text style={styles.statValuePrice}>${totalClaimedValue.toFixed(2)}</Text>
+          </View>
+        </View>
+
         {/* Filter Chips */}
         <View style={styles.filterRow}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipScroll}>
@@ -136,11 +240,11 @@ export default function VaultScreen() {
                 <BouncyPressable
                   key={item.key}
                   onPress={() => setFilter(item.key as any)}
-                  backgroundColor={isActive ? COLORS.primary : '#1e293b'}
+                  backgroundColor={isActive ? COLORS.primary : COLORS.surfaceCharcoal}
                   borderRadius={20}
                   shadowOffsetSize={0}
                   style={styles.filterChipWrapper}
-                  contentStyle={[styles.filterChip, !isActive && { borderWidth: 1, borderColor: '#334155' }]}
+                  contentStyle={[styles.filterChip, !isActive && { borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }]}
                 >
                   <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
                     {item.title}
@@ -154,7 +258,7 @@ export default function VaultScreen() {
         {/* Grid of Cards */}
         {displayedItems.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Gamepad2 size={48} color={COLORS.lightBg} />
+            <Gamepad2 size={48} color={COLORS.textMuted} />
             <Text style={styles.emptyTitle}>VAULT EMPTY</Text>
             <Text style={styles.emptySub}>
               Start claiming freebies from the feed.
@@ -162,79 +266,87 @@ export default function VaultScreen() {
           </View>
         ) : (
           <View style={styles.gridContainer}>
-            {displayedItems.map(({ post, status }) => {
+            {displayedItems.map(({ deal, status }) => {
               // Dynamic check for NSFW in case older saved item doesn't have the flag
-              const isItemNsfw = post.isNsfw || 
-                                 /nsfw/i.test(post.title || '') ||
-                                 /18\+/i.test(post.title || '') ||
-                                 /mazakon/i.test(post.title || '') ||
-                                 /tengoku/i.test(post.title || '') ||
-                                 (post.url && post.url.toLowerCase().includes('dlsite')) ||
-                                 post.platform.toLowerCase().includes('dlsite');
+              const isItemNsfw = deal.isNsfw || 
+                                 /nsfw/i.test(deal.title || '') ||
+                                 /18\+/i.test(deal.title || '') ||
+                                 /mazakon/i.test(deal.title || '') ||
+                                 /tengoku/i.test(deal.title || '') ||
+                                 (deal.url && deal.url.toLowerCase().includes('dlsite')) ||
+                                 deal.platform.toLowerCase().includes('dlsite');
 
               return (
-                <View key={post.id} style={styles.vaultCard}>
-                  {/* Image Cover */}
-                  <View style={styles.imageWrapper}>
-                    <Image 
-                      source={{ 
-                        uri: (() => {
-                          const resolvedUri = post.coverImage || (post as any).image;
-                          return (!imageErrors[post.id] && resolvedUri && resolvedUri !== 'placeholder')
-                            ? resolvedUri
-                            : getGameCover(post.id);
-                        })()
-                      }} 
-                      style={styles.cardImage} 
-                      blurRadius={isItemNsfw ? 15 : 0}
-                      onError={() => handleImageError(post.id)}
-                    />
-                    {isItemNsfw && (
-                      <View style={styles.nsfwVaultOverlay}>
-                        <View style={styles.nsfwBadge}>
-                          <Text style={styles.nsfwBadgeText}>NSFW</Text>
+                <View 
+                  key={deal.id} 
+                  style={[
+                    styles.vaultCard,
+                    status === 'TRACKING' ? styles.cardTracking : styles.cardClaimed
+                  ]}
+                >
+                  {/* Image Cover (clickable to open details) */}
+                  <Pressable onPress={() => onDealSelect?.(deal)}>
+                    <View style={styles.imageWrapper}>
+                      <Image 
+                        source={{ 
+                          uri: (() => {
+                            const resolvedUri = deal.image;
+                            return (!imageErrors[deal.id] && resolvedUri && resolvedUri !== 'placeholder')
+                              ? resolvedUri
+                              : getGameCover(deal.id);
+                          })()
+                        }} 
+                        style={styles.cardImage} 
+                        blurRadius={isItemNsfw ? 15 : 0}
+                        onError={() => handleImageError(deal.id)}
+                      />
+                      {isItemNsfw && (
+                        <View style={styles.nsfwVaultOverlay}>
+                          <View style={styles.nsfwBadge}>
+                            <Text style={styles.nsfwBadgeText}>NSFW</Text>
+                          </View>
                         </View>
-                      </View>
-                    )}
-                  </View>
+                      )}
+                    </View>
+                  </Pressable>
 
                   {/* Card Info */}
                   <View style={styles.cardInfo}>
                     <View style={styles.cardHeaderInfoRow}>
-                      <View style={styles.cardTextDetails}>
+                      <Pressable style={styles.cardTextDetails} onPress={() => onDealSelect?.(deal)}>
                         <Text numberOfLines={1} style={styles.gameTitle}>
-                          {post.cleanTitle || post.title}
+                          {deal.title}
                         </Text>
                         <View style={styles.platformIconRow}>
-                          <Gamepad2 size={12} color="#64748b" style={{ marginRight: 4 }} />
+                          <StoreIcon platform={deal.platform} size={12} color={COLORS.textMuted} style={{ marginRight: 4 }} />
                           <Text style={styles.platformLabel}>
-                            {post.platform.toUpperCase()} • {status === 'CLAIMED' ? 'STANDARD' : 'WISH-LISTED'}
+                            {deal.platform.toUpperCase()} • {status === 'CLAIMED' ? 'STANDARD' : 'WISH-LISTED'}
                           </Text>
                         </View>
-                      </View>
+                      </Pressable>
 
                       {/* Action Buttons */}
                       <View style={styles.cardActions}>
                         <BouncyPressable
-                          onPress={() => handleLaunchGame(post.url)}
-                          backgroundColor="#1e293b"
-                          borderRadius={8}
-                          shadowOffsetSize={0}
-                          style={styles.actionBtnWrapper}
-                          contentStyle={[styles.actionBtn, { borderWidth: 1, borderColor: '#334155' }]}
+                           onPress={() => handleLaunchGame(deal.url)}
+                           backgroundColor={COLORS.surfaceCharcoal}
+                           borderRadius={8}
+                           shadowOffsetSize={0}
+                           style={styles.actionBtnWrapper}
+                           contentStyle={[styles.actionBtn, { borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.05)' }]}
                         >
-                          <ExternalLink size={12} color="#dee2f6" />
+                          <ExternalLink size={14} color={COLORS.secondary} />
                         </BouncyPressable>
 
                         <BouncyPressable
-                          onPress={() => handleDeleteClaim(post.id)}
-                          backgroundColor="#ef4444"
+                          onPress={() => handleDeleteClaim(deal.id)}
+                          backgroundColor={COLORS.warning}
                           borderRadius={8}
                           shadowOffsetSize={0}
                           style={styles.actionBtnWrapper}
                           contentStyle={styles.actionBtn}
                         >
-                          <Trash2 size={12} color="#ffffff" />
+                          <Trash2 size={14} color="#ffffff" />
                         </BouncyPressable>
                       </View>
                     </View>
@@ -245,8 +357,6 @@ export default function VaultScreen() {
           </View>
         )}
       </ScrollView>
-
-
     </View>
   );
 }
@@ -257,10 +367,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg,
   },
   scrollContent: {
-    padding: 16,
+    padding: 20,
     paddingBottom: 24,
   },
-
   filterRow: {
     marginBottom: 20,
   },
@@ -279,10 +388,10 @@ const styles = StyleSheet.create({
   filterChipText: {
     fontFamily: FONTS.bold,
     fontSize: 14,
-    color: '#64748b',
+    color: COLORS.textMuted,
   },
   filterChipTextActive: {
-    color: '#0b101e',
+    color: COLORS.bg,
   },
   emptyContainer: {
     alignItems: 'center',
@@ -306,11 +415,24 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   vaultCard: {
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.surfaceCharcoal,
     borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 20,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 16,
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    elevation: 4,
+  },
+  cardTracking: {
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.secondary, // Cyan
+  },
+  cardClaimed: {
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.success, // Green
   },
   imageWrapper: {
     position: 'relative',
@@ -320,19 +442,6 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
-  },
-  statusBadge: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  statusBadgeText: {
-    fontFamily: FONTS.bold,
-    fontSize: 11,
-    color: '#0b101e',
   },
   cardInfo: {
     padding: 16,
@@ -349,7 +458,7 @@ const styles = StyleSheet.create({
   gameTitle: {
     fontFamily: FONTS.bold,
     fontSize: 18,
-    color: COLORS.text,
+    color: '#ffffff',
     marginBottom: 4,
   },
   platformIconRow: {
@@ -359,11 +468,11 @@ const styles = StyleSheet.create({
   platformLabel: {
     fontFamily: FONTS.medium,
     fontSize: 13,
-    color: '#64748b',
+    color: COLORS.textMuted,
   },
   cardActions: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 8,
   },
   actionBtnWrapper: {
     justifyContent: 'center',
@@ -375,26 +484,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 8,
   },
-  clearExpiredBtnWrapper: {
-    marginTop: 12,
-    width: '100%',
-  },
-  clearExpiredBtn: {
-    height: 48,
-    borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  clearExpiredBtnText: {
-    fontFamily: FONTS.bold,
-    fontSize: 14,
-    color: '#64748b',
-    letterSpacing: 0.5,
-  },
-
   nsfwVaultOverlay: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
@@ -404,17 +493,60 @@ const styles = StyleSheet.create({
   },
   nsfwBadge: {
     borderWidth: 1.5,
-    borderColor: '#ef4444',
+    borderColor: COLORS.warning,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    backgroundColor: 'rgba(255, 36, 73, 0.15)',
   },
   nsfwBadgeText: {
     fontFamily: FONTS.mono,
     fontSize: 12,
-    color: '#ff8888',
+    color: COLORS.warning,
     fontWeight: 'bold',
     letterSpacing: 1,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.surfaceCharcoal,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    marginBottom: 24,
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  statBox: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  statLabel: {
+    fontFamily: FONTS.bold,
+    fontSize: 10,
+    color: COLORS.textMuted,
+    marginBottom: 4,
+    letterSpacing: 1,
+  },
+  statValueClaimed: {
+    fontFamily: FONTS.bold,
+    fontSize: 24,
+    color: COLORS.primary,
+  },
+  statValuePrice: {
+    fontFamily: FONTS.bold,
+    fontSize: 24,
+    color: COLORS.secondary,
+  },
+  statDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
   },
 });
