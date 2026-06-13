@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, ScrollView } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { StyleSheet, Text, View, ScrollView, Image } from 'react-native';
 import { COLORS, FONTS } from '../theme/theme';
 import BouncyPressable from '../components/BouncyPressable';
 import { User, Clock } from 'lucide-react-native';
@@ -18,6 +18,13 @@ interface AlertItem {
   actionUrl?: string;
   isExpired?: boolean;
 }
+
+const COVER_IMAGES = [
+  'https://images.unsplash.com/photo-1538481199705-c710c4e965fc?auto=format&fit=crop&w=600&q=80',
+  'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=600&q=80',
+  'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=600&q=80',
+  'https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=600&q=80',
+];
 
 export default function AlertsScreen() {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
@@ -72,6 +79,14 @@ export default function AlertsScreen() {
     return `${days}d ago`;
   };
 
+  const getGameCover = useCallback((id: string) => {
+    let sum = 0;
+    for (let i = 0; i < id.length; i++) {
+      sum += id.charCodeAt(i);
+    }
+    return COVER_IMAGES[sum % COVER_IMAGES.length];
+  }, []);
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -101,7 +116,7 @@ export default function AlertsScreen() {
             <BouncyPressable
               onPress={clearAlerts}
               backgroundColor="transparent"
-              borderRadius={8}
+              borderRadius={20}
               shadowOffsetSize={0}
               style={styles.clearLogsBtnWrapper}
               contentStyle={styles.clearLogsBtn}
@@ -125,74 +140,125 @@ export default function AlertsScreen() {
               const isEpic = alert.platform.toLowerCase().includes('epic');
               const isSteam = alert.platform.toLowerCase().includes('steam');
               const isGog = alert.platform.toLowerCase().includes('gog');
+              const isAnnouncement = alert.platform.toLowerCase().includes('announcement');
               const relativeTime = getRelativeTime(alert.timestamp);
+              const coverUri = getGameCover(alert.id);
+              const progressPercent = alert.isExpired ? 100 : 30;
 
               return (
                 <View key={alert.id} style={[styles.alertCard, alert.isExpired && styles.alertCardExpired]}>
-                  {/* Top Row: Badges & Timestamp */}
-                  <View style={styles.alertHeaderRow}>
-                    <View style={styles.alertBadges}>
-                      <View style={[
-                        styles.platformBadge,
-                        isSteam && styles.platformBadgeSteam,
-                        isEpic && styles.platformBadgeEpic,
-                        isGog && styles.platformBadgeGog
-                      ]}>
-                        <Text style={styles.platformBadgeText}>{alert.platform.toUpperCase()}</Text>
-                      </View>
-                      
-                      {alert.isLive && (
-                        <View style={styles.liveNowBadge}>
-                          <Text style={styles.liveNowText}>LIVE NOW</Text>
-                        </View>
-                      )}
-                    </View>
-                    
-                    <Text style={styles.relativeTimeText}>{relativeTime}</Text>
+                  {/* Cover Image sitting on top */}
+                  <View style={styles.cardImageContainer}>
+                    <Image 
+                      source={{ uri: coverUri }} 
+                      style={styles.cardImage} 
+                    />
+                    <View style={styles.cardImageGradient} />
                   </View>
 
-                  {/* Title */}
-                  <Text style={[styles.alertTitle, alert.isExpired && styles.alertTitleExpired]}>
-                    {alert.title}
-                  </Text>
-
-                  {/* Description */}
-                  <Text style={[styles.alertDesc, alert.isExpired && styles.alertDescExpired]}>
-                    {alert.description}
-                  </Text>
-
-                  {/* Bottom Row */}
-                  {!alert.isExpired && (
-                    <View style={styles.alertBottomRow}>
-                      <View style={styles.alertMetricRow}>
-                        {alert.actionType === 'claim' ? (
-                          <User size={12} color="#64748b" />
-                        ) : (
-                          <Clock size={12} color="#64748b" />
-                        )}
-                        <Text style={styles.alertMetricText}>{alert.claimedCount}</Text>
-                      </View>
-
-                      <BouncyPressable
-                        onPress={() => alert.actionUrl && WebBrowser.openBrowserAsync(alert.actionUrl)}
-                        backgroundColor={alert.actionType === 'claim' ? '#39ff14' : '#1e293b'}
-                        borderRadius={8}
-                        shadowOffsetSize={0}
-                        style={styles.alertActionBtnWrapper}
-                        contentStyle={[
-                          styles.alertActionBtn,
-                          alert.actionType === 'details' && { borderWidth: 1, borderColor: '#334155' }
-                        ]}
-                      >
-                        <Text style={[
-                          styles.alertActionBtnText,
-                          { color: alert.actionType === 'claim' ? '#0b101e' : '#dee2f6' }
+                  {/* Content Section overlapping image */}
+                  <View style={styles.cardContent}>
+                    {/* Top Row: Badges & Timestamp */}
+                    <View style={styles.alertHeaderRow}>
+                      <View style={styles.alertBadges}>
+                        <View style={[
+                          styles.platformBadge,
+                          isSteam && styles.platformBadgeSteam,
+                          isEpic && styles.platformBadgeEpic,
+                          isGog && styles.platformBadgeGog,
+                          isAnnouncement && styles.platformBadgeAnnouncement
                         ]}>
-                          {alert.actionType === 'claim' ? 'Claim Loot' : 'View Details'}
-                        </Text>
-                      </BouncyPressable>
+                          <Text style={styles.platformBadgeText}>{alert.platform.toUpperCase()}</Text>
+                        </View>
+                        
+                        {alert.isLive && (
+                          <View style={styles.liveNowBadge}>
+                            <Text style={styles.liveNowText}>LIVE NOW</Text>
+                          </View>
+                        )}
+                      </View>
+                      
+                      <Text style={styles.relativeTimeText}>{relativeTime}</Text>
                     </View>
-                  )}
+
+                    {/* Title */}
+                    <Text style={[styles.alertTitle, alert.isExpired && styles.alertTitleExpired]}>
+                      {alert.title}
+                    </Text>
+
+                    {/* Status Block */}
+                    <View style={styles.statusBlock}>
+                      <View style={styles.statusRow}>
+                        <View style={styles.timerWrapper}>
+                          <Text style={[
+                            styles.timerIconText, 
+                            { color: alert.isExpired ? COLORS.warning : COLORS.success }
+                          ]}>🕒</Text>
+                          <Text style={[
+                            styles.timerText, 
+                            { color: alert.isExpired ? COLORS.warning : COLORS.success }
+                          ]}>
+                            {alert.isExpired ? 'EXPIRED' : 'ACTIVE'}
+                          </Text>
+                        </View>
+                        <Text style={[
+                          styles.statusLabel,
+                          { color: alert.isExpired ? COLORS.warning : COLORS.success }
+                        ]}>
+                          {alert.isExpired ? 'ENDED' : 'LIVE'}
+                        </Text>
+                      </View>
+                      
+                      {/* Expiry Progress Bar */}
+                      <View style={styles.progressBarBg}>
+                        <View style={[
+                          styles.progressBarFill, 
+                          { 
+                            width: `${progressPercent}%`,
+                            backgroundColor: alert.isExpired ? COLORS.warning : COLORS.success 
+                          }
+                        ]} />
+                      </View>
+                    </View>
+
+                    {/* Description */}
+                    <Text style={[styles.alertDesc, alert.isExpired && styles.alertDescExpired]}>
+                      {alert.description}
+                    </Text>
+
+                    {/* Bottom Row */}
+                    {!alert.isExpired && (
+                      <View style={styles.alertBottomRow}>
+                        <View style={styles.alertMetricRow}>
+                          {alert.actionType === 'claim' ? (
+                            <User size={14} color="#858585" />
+                          ) : (
+                            <Clock size={14} color="#858585" />
+                          )}
+                          <Text style={styles.alertMetricText}>{alert.claimedCount || 'Active'}</Text>
+                        </View>
+
+                        <BouncyPressable
+                          onPress={() => alert.actionUrl && WebBrowser.openBrowserAsync(alert.actionUrl)}
+                          backgroundColor={alert.actionType === 'claim' ? COLORS.primary : COLORS.surfaceHigh}
+                          borderRadius={20}
+                          shadowOffsetSize={0}
+                          style={styles.alertActionBtnWrapper}
+                          contentStyle={[
+                            styles.alertActionBtn,
+                            alert.actionType === 'details' && { borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }
+                          ]}
+                        >
+                          <Text style={[
+                            styles.alertActionBtnText,
+                            { color: alert.actionType === 'claim' ? '#131313' : COLORS.text }
+                          ]}>
+                            {alert.actionType === 'claim' ? 'Claim Loot' : 'View Details'}
+                          </Text>
+                        </BouncyPressable>
+                      </View>
+                    )}
+                  </View>
                 </View>
               );
             })}
@@ -213,10 +279,12 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   statusBanner: {
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.surfaceCharcoal,
     borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 24,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.success,
+    borderRadius: 16,
     padding: 16,
     marginBottom: 24,
   },
@@ -229,13 +297,13 @@ const styles = StyleSheet.create({
   bannerTitle: {
     fontFamily: FONTS.mono,
     fontSize: 12,
-    color: '#64748b',
+    color: COLORS.textMuted,
     letterSpacing: 1,
   },
   uptimeBadge: {
-    backgroundColor: 'rgba(57, 255, 20, 0.05)',
+    backgroundColor: 'rgba(78, 224, 130, 0.1)',
     borderWidth: 1,
-    borderColor: '#39ff14',
+    borderColor: COLORS.success,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -243,7 +311,7 @@ const styles = StyleSheet.create({
   uptimeText: {
     fontFamily: FONTS.mono,
     fontSize: 11,
-    color: '#39ff14',
+    color: COLORS.success,
     fontWeight: 'bold',
   },
   bannerStatusRow: {
@@ -256,7 +324,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#39ff14',
+    backgroundColor: COLORS.success,
   },
   bannerStatusText: {
     fontFamily: FONTS.bold,
@@ -266,21 +334,21 @@ const styles = StyleSheet.create({
   bannerInfo: {
     fontFamily: FONTS.medium,
     fontSize: 14,
-    color: '#64748b',
+    color: COLORS.textMuted,
     lineHeight: 20,
   },
   sectionHeaderContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
     paddingHorizontal: 4,
   },
   sectionTitle: {
-    fontFamily: FONTS.bold,
-    fontSize: 18,
+    fontFamily: FONTS.extraBold,
+    fontSize: 22,
     color: COLORS.text,
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
   clearLogsBtnWrapper: {
     justifyContent: 'center',
@@ -289,13 +357,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 8,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 20,
   },
   clearLogsBtnText: {
-    fontFamily: FONTS.bold,
-    fontSize: 12,
-    color: '#94a3b8',
+    fontFamily: FONTS.mono,
+    fontSize: 11,
+    color: COLORS.textMuted,
     letterSpacing: 0.5,
   },
   emptyContainer: {
@@ -305,29 +373,59 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   emptyTitle: {
-    fontFamily: FONTS.bold,
-    fontSize: 20,
+    fontFamily: FONTS.extraBold,
+    fontSize: 22,
     color: COLORS.text,
+    letterSpacing: 0.5,
   },
   emptySub: {
     fontFamily: FONTS.medium,
     fontSize: 15,
-    color: COLORS.onSurfaceVariant,
+    color: COLORS.textMuted,
     textAlign: 'center',
     maxWidth: 240,
+    lineHeight: 22,
   },
   alertList: {
-    gap: 12,
+    gap: 16,
   },
   alertCard: {
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.surfaceCharcoal,
     borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 20,
-    padding: 16,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    elevation: 4,
   },
   alertCardExpired: {
-    opacity: 0.6,
+    backgroundColor: 'rgba(255, 36, 73, 0.03)',
+    borderColor: 'rgba(255, 36, 73, 0.15)',
+    opacity: 0.7,
+  },
+  cardImageContainer: {
+    height: 120,
+    width: '100%',
+    position: 'relative',
+  },
+  cardImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  cardImageGradient: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(19, 19, 19, 0.6)',
+  },
+  cardContent: {
+    padding: 16,
+    paddingTop: 8,
+    marginTop: -32,
+    backgroundColor: 'transparent',
   },
   alertHeaderRow: {
     flexDirection: 'row',
@@ -340,34 +438,38 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   platformBadge: {
-    backgroundColor: '#334155',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#475569',
+    backgroundColor: COLORS.surfaceHigh,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
   platformBadgeSteam: {
-    backgroundColor: 'rgba(27, 58, 87, 0.15)',
+    backgroundColor: 'rgba(27, 58, 87, 0.25)',
     borderColor: '#1b3a57',
   },
   platformBadgeEpic: {
-    backgroundColor: 'rgba(27, 77, 62, 0.15)',
+    backgroundColor: 'rgba(27, 77, 62, 0.25)',
     borderColor: '#1b4d3e',
   },
   platformBadgeGog: {
-    backgroundColor: 'rgba(77, 42, 51, 0.15)',
+    backgroundColor: 'rgba(77, 42, 51, 0.25)',
     borderColor: '#4d2a33',
+  },
+  platformBadgeAnnouncement: {
+    backgroundColor: 'rgba(168, 85, 247, 0.25)',
+    borderColor: '#a855f7',
   },
   platformBadgeText: {
     fontFamily: FONTS.mono,
     fontSize: 10,
-    color: '#dee2f6',
+    color: COLORS.text,
   },
   liveNowBadge: {
-    backgroundColor: 'rgba(57, 255, 20, 0.1)',
+    backgroundColor: 'rgba(78, 224, 130, 0.1)',
     borderWidth: 1,
-    borderColor: '#39ff14',
+    borderColor: COLORS.success,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -375,32 +477,75 @@ const styles = StyleSheet.create({
   liveNowText: {
     fontFamily: FONTS.mono,
     fontSize: 10,
-    color: '#39ff14',
+    color: COLORS.success,
   },
   relativeTimeText: {
     fontFamily: FONTS.mono,
-    fontSize: 12,
-    color: '#64748b',
+    fontSize: 11,
+    color: COLORS.textMuted,
   },
   alertTitle: {
     fontFamily: FONTS.bold,
-    fontSize: 18,
-    color: '#39ff14',
-    lineHeight: 22,
-    marginBottom: 6,
+    fontSize: 20,
+    color: '#ffffff',
+    lineHeight: 24,
+    marginBottom: 8,
   },
   alertTitleExpired: {
-    color: '#94a3b8',
+    color: COLORS.textMuted,
+    textDecorationLine: 'line-through',
+  },
+  statusBlock: {
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  timerWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  timerIconText: {
+    fontSize: 14,
+  },
+  timerText: {
+    fontFamily: FONTS.mono,
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  statusLabel: {
+    fontFamily: FONTS.bold,
+    fontSize: 10,
+    textTransform: 'uppercase',
+  },
+  progressBarBg: {
+    height: 4,
+    backgroundColor: COLORS.surfaceHigh,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 2,
   },
   alertDesc: {
     fontFamily: FONTS.medium,
-    fontSize: 15,
-    color: '#dee2f6',
-    lineHeight: 21,
+    fontSize: 14,
+    color: COLORS.onSurfaceVariant,
+    lineHeight: 20,
     marginBottom: 12,
   },
   alertDescExpired: {
-    color: '#64748b',
+    color: COLORS.textMuted,
     fontStyle: 'italic',
   },
   alertBottomRow: {
@@ -415,19 +560,23 @@ const styles = StyleSheet.create({
   },
   alertMetricText: {
     fontFamily: FONTS.mono,
-    fontSize: 12,
-    color: '#64748b',
+    fontSize: 11,
+    color: COLORS.textMuted,
   },
   alertActionBtnWrapper: {
-    justifyContent: 'center',
+    borderRadius: 20,
+    overflow: 'hidden',
   },
   alertActionBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   alertActionBtnText: {
     fontFamily: FONTS.bold,
     fontSize: 13,
+    letterSpacing: 0.5,
   },
 });
+
