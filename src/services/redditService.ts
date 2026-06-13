@@ -160,31 +160,44 @@ function parseRedditRssXml(xmlText: string): RedditPost[] {
   const entries = xmlText.split('<entry>');
   entries.shift(); // remove feed metadata header
 
+  const clean = (s: string) => s.replace(/^<!\[CDATA\[/gi, '').replace(/\]\]>$/gi, '').trim();
+
   const parsed = entries.map((entryText) => {
     // 1. Title
     const titleMatch = entryText.match(/<title>([\s\S]*?)<\/title>/);
-    const title = titleMatch ? titleMatch[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>') : '';
+    let title = titleMatch ? titleMatch[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>') : '';
+    title = clean(title);
 
     // 2. Link
-    const permalinkMatch = entryText.match(/<link\s+href="([^"]+)"/);
-    const permalink = permalinkMatch ? permalinkMatch[1].replace('old.reddit.com', 'www.reddit.com') : '';
+    const permalinkMatch = entryText.match(/<link\s+href="([^"]+)"/) || entryText.match(/<link\s+[^>]*href=["']([^"']+)["']/i);
+    let permalink = permalinkMatch ? permalinkMatch[1].replace('old.reddit.com', 'www.reddit.com') : '';
+    permalink = clean(permalink);
 
     // 3. ID
     const idMatch = entryText.match(/<id>([^<]+)<\/id>/);
-    const fullId = idMatch ? idMatch[1] : '';
-    const id = fullId.replace('t3_', '');
+    let fullId = idMatch ? idMatch[1] : '';
+    fullId = clean(fullId);
+    let id = fullId.replace('t3_', '');
+    if (id.includes('/comments/')) {
+      const m = id.match(/\/comments\/([a-z0-9]+)/i);
+      if (m && m[1]) id = m[1];
+    }
 
     // 4. Author
     const authorMatch = entryText.match(/<author><name>([^<]+)<\/name>/);
-    const author = authorMatch ? authorMatch[1].replace('/u/', '') : 'unknown';
+    let author = authorMatch ? authorMatch[1].replace('/u/', '') : 'unknown';
+    author = clean(author);
 
     // 5. Date
-    const publishedMatch = entryText.match(/<published>([^<]+)<\/published>/);
-    const createdAt = publishedMatch ? new Date(publishedMatch[1]).getTime() : Date.now();
+    const publishedMatch = entryText.match(/<published>([^<]+)<\/published>/) || entryText.match(/<updated>([^<]+)<\/updated>/);
+    const publishedRaw = publishedMatch ? publishedMatch[1] : '';
+    const cleanPublished = clean(publishedRaw);
+    const createdAt = cleanPublished ? new Date(cleanPublished).getTime() : Date.now();
 
     // 6. Content (giveaway url and selftext)
-    const contentMatch = entryText.match(/<content type="html">([\s\S]*?)<\/content>/);
-    const htmlContent = contentMatch ? contentMatch[1] : '';
+    const contentMatch = entryText.match(/<content type="html">([\s\S]*?)<\/content>/) || entryText.match(/<summary type="html">([\s\S]*?)<\/summary>/);
+    let htmlContent = contentMatch ? contentMatch[1] : '';
+    htmlContent = clean(htmlContent);
 
     const unescapedContent = htmlContent
       .replace(/&amp;/g, '&')
@@ -284,7 +297,24 @@ export async function fetchRedditPostsPaginated(
     const posts = parseRedditRssXml(xml);
     return { posts: posts.slice(0, limit) };
   } catch (error) {
-    console.warn('[RedditService] Reddit fetch failed, continuing with GamerPower only:', error);
+    console.warn('[RedditService] Reddit fetch failed, attempting OpenRSS fallback...', error);
+    try {
+      // OpenRSS fallback
+      const openRssUrl = `https://openrss.org/feed/www.reddit.com/r/FreeGameFindings/${feedType === 'new' ? 'new/' : ''}`;
+      const response = await fetch(openRssUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      });
+      if (response.ok) {
+        const xml = await response.text();
+        const posts = parseRedditRssXml(xml);
+        console.log(`[RedditService] Successfully fetched ${posts.length} posts from OpenRSS fallback.`);
+        return { posts: posts.slice(0, limit) };
+      }
+    } catch (fallbackError) {
+      console.warn('[RedditService] OpenRSS fallback also failed:', fallbackError);
+    }
     return { posts: [] };
   }
 }

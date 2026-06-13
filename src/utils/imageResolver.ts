@@ -100,7 +100,7 @@ async function fetchSteamImageByTitle(title: string): Promise<string | undefined
               html.match(/<meta\s+[^>]*property=["']og:image["']\s+content=["']([^"']+)["']/i) ||
               html.match(/<meta\s+[^>]*content=["']([^"']+)["']\s+property=["']og:image["']/i);
             if (ogMatch && ogMatch[1]) {
-              let imgUrl = ogMatch[1].trim();
+              let imgUrl = ogMatch[1].trim().replace(/&amp;/g, '&');
               if (imgUrl.startsWith('//')) imgUrl = 'https:' + imgUrl;
               return imgUrl;
             }
@@ -194,7 +194,11 @@ export async function fetchImageFromUrl(url: string, title?: string): Promise<st
 
       // 3. Fetch page HTML and extract og:image / twitter:image
       try {
-        const response = await fetch(url, {
+        let fetchUrl = url;
+        if (fetchUrl.toLowerCase().includes('reddit.com') && !fetchUrl.toLowerCase().includes('old.reddit.com')) {
+          fetchUrl = fetchUrl.replace(/(www\.)?reddit\.com/i, 'old.reddit.com');
+        }
+        const response = await fetch(fetchUrl, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           },
@@ -224,7 +228,7 @@ export async function fetchImageFromUrl(url: string, title?: string): Promise<st
             html.match(/<meta\s+[^>]*content=["']([^"']+)["']\s+name=["']twitter:image["']/i);
 
           if (ogMatch && ogMatch[1]) {
-            let imgUrl = ogMatch[1].trim();
+            let imgUrl = ogMatch[1].trim().replace(/&amp;/g, '&');
             if (imgUrl.startsWith('//')) imgUrl = 'https:' + imgUrl;
             // Skip tiny placeholder images (favicon-size)
             if (!imgUrl.includes('favicon') && !imgUrl.endsWith('.ico')) {
