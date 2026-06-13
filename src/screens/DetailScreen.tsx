@@ -20,6 +20,7 @@ import { parseBotComment, getExpiryStatus, parseExpiryFromPostBody, checkIsFully
 import { expiredFeedService } from '../services/ExpiredFeedService';
 import { tasksFeedService } from '../services/TasksFeedService';
 import { enrichEpicDeal } from '../services/EpicGamesEnricher';
+import { enrichSteamDeal } from '../services/SteamGamesEnricher';
 import { addClaimedPost, getClaimedPosts } from '../services/storageService';
 import { dealEnrichmentService } from '../services/DealEnrichmentService';
 import { fetchImageFromUrl } from '../utils/imageResolver';
@@ -195,6 +196,13 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
           epicData = await enrichEpicDeal(deal.title);
         }
 
+        // Check if it's a Steam deal
+        const isSteam = (deal.platform || '').toLowerCase().includes('steam') || (deal.url || '').toLowerCase().includes('steampowered.com');
+        let steamData: any = null;
+        if (isSteam) {
+          steamData = await enrichSteamDeal(deal.url);
+        }
+
           const botResult = await fetchBotComment(deal.id, deal.title);
           
           if (botResult) {
@@ -217,7 +225,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
 
             const finalExpiresAt = epicData?.expiresAt || expiresAt || deal.expiresAt;
 
-            let resolvedImage = epicData?.image || deal.image;
+            let resolvedImage = steamData?.image || epicData?.image || deal.image;
             if (!resolvedImage && parsed.storeUrl) {
               resolvedImage = await fetchImageFromUrl(parsed.storeUrl, deal.title);
             }
@@ -232,14 +240,14 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               expiresAt: finalExpiresAt,
               expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
               claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
-              developer: epicData?.developer || parsed.developer || deal.developer,
-              releaseDate: parsed.releaseDate || deal.releaseDate || undefined,
-              genres: parsed.genres.length > 0 ? parsed.genres : (deal.genres || undefined),
+              developer: steamData?.developer || epicData?.developer || parsed.developer || deal.developer,
+              releaseDate: steamData?.releaseDate || parsed.releaseDate || deal.releaseDate || undefined,
+              genres: steamData?.genres || (parsed.genres.length > 0 ? parsed.genres : (deal.genres || undefined)),
               achievements: parsed.achievements !== null ? parsed.achievements : (deal.achievements || undefined),
               tradingCards: parsed.tradingCards !== null ? parsed.tradingCards : (deal.tradingCards || undefined),
               reviewScore: parsed.reviewScore || deal.reviewScore || undefined,
               steamDbRating: parsed.steamDbRating || deal.steamDbRating || undefined,
-              aboutGame: epicData?.description || parsed.aboutGame || deal.aboutGame,
+              aboutGame: steamData?.description || epicData?.description || parsed.aboutGame || deal.aboutGame,
               instructions: parsed.instructions || undefined,
               parserConfidence: parsed.parserConfidence,
               image: resolvedImage,
@@ -259,7 +267,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
             
             const finalExpiresAt = epicData?.expiresAt || postBodyExpiry || deal.expiresAt;
 
-            let resolvedImage = epicData?.image || deal.image;
+            let resolvedImage = steamData?.image || epicData?.image || deal.image;
             if (!resolvedImage) {
               resolvedImage = await fetchImageFromUrl(deal.url, deal.title);
             }
@@ -269,9 +277,11 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               expiresAt: finalExpiresAt,
               expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
               claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
-              developer: epicData?.developer || deal.developer,
-              aboutGame: epicData?.description || deal.aboutGame,
+              developer: steamData?.developer || epicData?.developer || deal.developer,
+              aboutGame: steamData?.description || epicData?.description || deal.aboutGame,
               image: resolvedImage,
+              genres: steamData?.genres || deal.genres,
+              releaseDate: steamData?.releaseDate || deal.releaseDate,
               url: epicData?.url || deal.url,
               timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
             };

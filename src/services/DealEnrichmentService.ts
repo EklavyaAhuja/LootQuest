@@ -5,6 +5,7 @@ import { parseBotComment, getExpiryStatus, parseExpiryFromPostBody, checkIsFully
 import { expiredFeedService } from './ExpiredFeedService';
 import { tasksFeedService } from './TasksFeedService';
 import { enrichEpicDeal } from './EpicGamesEnricher';
+import { enrichSteamDeal } from './SteamGamesEnricher';
 import { fetchImageFromUrl } from '../utils/imageResolver';
 import { getTimeLeft } from '../utils/dealUtils';
 
@@ -117,6 +118,35 @@ class DealEnrichmentService {
       }
     }
 
+    // Check if it's a Steam deal (safe to enrich in background since it queries Steam Storefront API directly)
+    const isSteam = (deal.platform || '').toLowerCase().includes('steam') || (deal.url || '').toLowerCase().includes('steampowered.com');
+    if (isSteam) {
+      try {
+        const steamData = await enrichSteamDeal(deal.url);
+        if (steamData) {
+          const isExpiredFromFlair = expiredFeedService.isExpired(deal.id);
+          const isTaskFromFlair = tasksFeedService.isTask(deal.id);
+          const enriched: Deal = {
+            ...deal,
+            expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (deal.expiresAt ? getExpiryStatus(deal.expiresAt) : (deal.expiryStatus || 'UNKNOWN')),
+            claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
+            developer: steamData.developer || deal.developer,
+            aboutGame: steamData.description || deal.aboutGame,
+            image: steamData.image || deal.image || 'placeholder',
+            genres: steamData.genres || deal.genres,
+            releaseDate: steamData.releaseDate || deal.releaseDate,
+            timeLeft: getTimeLeft(deal.expiresAt || deal.endDate),
+          };
+          await saveCachedDeal(deal.id, enriched, '');
+          onUpdate(enriched);
+          this.notify(enriched);
+          return;
+        }
+      } catch (err) {
+        console.warn('[DealEnrichmentService] Steam background enrichment failed:', err);
+      }
+    }
+
     // For non-cached, non-Epic games, we do NOT perform background Reddit comments RSS fetch
     // to prevent rate-limiting. They will be enriched lazily when the user opens the DetailScreen.
   }
@@ -134,6 +164,17 @@ class DealEnrichmentService {
         epicData = await enrichEpicDeal(deal.title);
       } catch (err) {
         console.warn('[DealEnrichmentService] Epic background enrichment failed:', err);
+      }
+    }
+
+    // Check if it's a Steam deal
+    const isSteam = (deal.platform || '').toLowerCase().includes('steam') || (deal.url || '').toLowerCase().includes('steampowered.com');
+    let steamData: any = null;
+    if (isSteam) {
+      try {
+        steamData = await enrichSteamDeal(deal.url);
+      } catch (err) {
+        console.warn('[DealEnrichmentService] Steam background enrichment failed:', err);
       }
     }
 
@@ -174,17 +215,17 @@ class DealEnrichmentService {
         expiresAt: finalExpiresAt,
         expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
         claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
-        developer: epicData?.developer || parsed.developer || deal.developer,
-        releaseDate: parsed.releaseDate || deal.releaseDate || undefined,
-        genres: parsed.genres.length > 0 ? parsed.genres : (deal.genres || undefined),
+        developer: steamData?.developer || epicData?.developer || parsed.developer || deal.developer,
+        releaseDate: steamData?.releaseDate || parsed.releaseDate || deal.releaseDate || undefined,
+        genres: steamData?.genres || (parsed.genres.length > 0 ? parsed.genres : (deal.genres || undefined)),
         achievements: parsed.achievements !== null ? parsed.achievements : (deal.achievements || undefined),
         tradingCards: parsed.tradingCards !== null ? parsed.tradingCards : (deal.tradingCards || undefined),
         reviewScore: parsed.reviewScore || deal.reviewScore || undefined,
         steamDbRating: parsed.steamDbRating || deal.steamDbRating || undefined,
-        aboutGame: epicData?.description || parsed.aboutGame || deal.aboutGame,
+        aboutGame: steamData?.description || epicData?.description || parsed.aboutGame || deal.aboutGame,
         instructions: parsed.instructions || undefined,
         parserConfidence: parsed.parserConfidence,
-        image: resolvedImage,
+        image: steamData?.image || epicData?.image || resolvedImage,
         url: epicData?.url || parsed.storeUrl || deal.url,
         timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
       };
@@ -200,7 +241,7 @@ class DealEnrichmentService {
       
       const finalExpiresAt = epicData?.expiresAt || postBodyExpiry || deal.expiresAt;
 
-      let resolvedImage = epicData?.image || deal.image;
+      let resolvedImage = steamData?.image || epicData?.image || deal.image;
       if (!resolvedImage) {
         resolvedImage = await fetchImageFromUrl(deal.url, deal.title);
       }
@@ -210,9 +251,11 @@ class DealEnrichmentService {
         expiresAt: finalExpiresAt,
         expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
         claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
-        developer: epicData?.developer || deal.developer,
-        aboutGame: epicData?.description || deal.aboutGame,
+        developer: steamData?.developer || epicData?.developer || deal.developer,
+        aboutGame: steamData?.description || epicData?.description || deal.aboutGame,
         image: resolvedImage || 'placeholder',
+        genres: steamData?.genres || deal.genres,
+        releaseDate: steamData?.releaseDate || deal.releaseDate,
         url: epicData?.url || deal.url,
         timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
       };
