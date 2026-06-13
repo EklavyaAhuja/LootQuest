@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, Text, View, ScrollView, Image } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { StyleSheet, Text, View, ScrollView, Image, Animated, Easing } from 'react-native';
 import { COLORS, FONTS } from '../theme/theme';
 import BouncyPressable from '../components/BouncyPressable';
 import { User, Clock } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
+import Svg, { Circle, Line, Path, Defs, LinearGradient, Stop } from 'react-native-svg';
 
 interface AlertItem {
   id: string;
@@ -26,6 +27,56 @@ const COVER_IMAGES = [
   'https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=600&q=80',
 ];
 
+const RadarAnimation = () => {
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(rotateAnim, {
+        toValue: 1,
+        duration: 2500,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+  }, [rotateAnim]);
+
+  const rotate = rotateAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  return (
+    <View style={styles.radarWrapper}>
+      {/* Static Background Rings */}
+      <Svg width={90} height={90} style={StyleSheet.absoluteFill}>
+        {/* Outer Ring */}
+        <Circle cx={45} cy={45} r={44} stroke="rgba(57, 255, 20, 0.15)" strokeWidth={1} fill="transparent" />
+        {/* Middle Dashed Ring */}
+        <Circle cx={45} cy={45} r={28} stroke="rgba(57, 255, 20, 0.12)" strokeWidth={1} strokeDasharray="4, 4" fill="transparent" />
+        {/* Center Ring */}
+        <Circle cx={45} cy={45} r={12} stroke="rgba(57, 255, 20, 0.15)" strokeWidth={1} strokeDasharray="2, 2" fill="transparent" />
+        {/* Center Dot */}
+        <Circle cx={45} cy={45} r={3} fill="#39ff14" />
+      </Svg>
+
+      {/* Rotating Sweep */}
+      <Animated.View style={[styles.radarSweep, { transform: [{ rotate }] }]}>
+        <Svg width={90} height={90}>
+          <Defs>
+            <LinearGradient id="sweepGrad" x1="1" y1="1" x2="0" y2="0">
+              <Stop offset="0%" stopColor="#39ff14" stopOpacity="0.4" />
+              <Stop offset="100%" stopColor="#39ff14" stopOpacity="0.0" />
+            </LinearGradient>
+          </Defs>
+          <Path d="M 45 45 L 45 1 A 44 44 0 0 1 89 45 Z" fill="url(#sweepGrad)" />
+          <Line x1={45} y1={45} x2={45} y2={1} stroke="#39ff14" strokeWidth={1.5} />
+        </Svg>
+      </Animated.View>
+    </View>
+  );
+};
+
 export default function AlertsScreen() {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
@@ -41,9 +92,9 @@ export default function AlertsScreen() {
         const raw = await AsyncStorage.getItem('fgf_notification_logs_v2');
         if (raw) {
           const parsed = JSON.parse(raw);
-          const filtered = parsed.filter((alert: any) => 
-            alert.id !== 'alert_1' && 
-            alert.id !== 'alert_2' && 
+          const filtered = parsed.filter((alert: any) =>
+            alert.id !== 'alert_1' &&
+            alert.id !== 'alert_2' &&
             alert.id !== 'alert_3' &&
             !/neon nexus/i.test(alert.title) &&
             !/void runner x/i.test(alert.title) &&
@@ -97,21 +148,31 @@ export default function AlertsScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Alerts Status Banner */}
         <View style={styles.statusBanner}>
-          <View style={styles.bannerHeader}>
-            <Text style={styles.bannerTitle}>SCANNER STATUS</Text>
-            <View style={styles.uptimeBadge}>
-              <Text style={styles.uptimeText}>UPTIME 99.9%</Text>
+          <View style={styles.bannerRow}>
+            {/* Left Content Column */}
+            <View style={styles.bannerTextCol}>
+              <View style={styles.bannerHeader}>
+                <Text style={styles.bannerTitle}>SCANNER STATUS</Text>
+                <View style={styles.uptimeBadge}>
+                  <Text style={styles.uptimeText}>UPTIME 99.9%</Text>
+                </View>
+              </View>
+
+              <View style={styles.bannerStatusRow}>
+                <View style={styles.statusDot} />
+                <Text style={styles.bannerStatusText}>System Active</Text>
+              </View>
+
+              <Text style={styles.bannerInfo}>
+                Searching for free loot
+              </Text>
+            </View>
+
+            {/* Right Radar Column */}
+            <View style={styles.radarCol}>
+              <RadarAnimation />
             </View>
           </View>
-          
-          <View style={styles.bannerStatusRow}>
-            <View style={styles.statusDot} />
-            <Text style={styles.bannerStatusText}>System Active</Text>
-          </View>
-
-          <Text style={styles.bannerInfo}>
-            Continuously monitoring 14 platforms for limited-time game giveaways and beta access.
-          </Text>
         </View>
 
         {/* Header with Clear Button */}
@@ -155,9 +216,9 @@ export default function AlertsScreen() {
                   {/* Cover Image sitting on top */}
                   <View style={styles.cardImageContainer}>
                     {(!imageErrors[alert.id] && coverUri) ? (
-                      <Image 
-                        source={{ uri: coverUri }} 
-                        style={styles.cardImage} 
+                      <Image
+                        source={{ uri: coverUri }}
+                        style={styles.cardImage}
                         onError={() => handleImageError(alert.id)}
                       />
                     ) : (
@@ -182,14 +243,14 @@ export default function AlertsScreen() {
                         ]}>
                           <Text style={styles.platformBadgeText}>{alert.platform.toUpperCase()}</Text>
                         </View>
-                        
+
                         {alert.isLive && (
                           <View style={styles.liveNowBadge}>
                             <Text style={styles.liveNowText}>LIVE NOW</Text>
                           </View>
                         )}
                       </View>
-                      
+
                       <Text style={styles.relativeTimeText}>{relativeTime}</Text>
                     </View>
 
@@ -203,11 +264,11 @@ export default function AlertsScreen() {
                       <View style={styles.statusRow}>
                         <View style={styles.timerWrapper}>
                           <Text style={[
-                            styles.timerIconText, 
+                            styles.timerIconText,
                             { color: alert.isExpired ? COLORS.warning : COLORS.success }
                           ]}>🕒</Text>
                           <Text style={[
-                            styles.timerText, 
+                            styles.timerText,
                             { color: alert.isExpired ? COLORS.warning : COLORS.success }
                           ]}>
                             {alert.isExpired ? 'EXPIRED' : 'ACTIVE'}
@@ -220,14 +281,14 @@ export default function AlertsScreen() {
                           {alert.isExpired ? 'ENDED' : 'LIVE'}
                         </Text>
                       </View>
-                      
+
                       {/* Expiry Progress Bar */}
                       <View style={styles.progressBarBg}>
                         <View style={[
-                          styles.progressBarFill, 
-                          { 
+                          styles.progressBarFill,
+                          {
                             width: `${progressPercent}%`,
-                            backgroundColor: alert.isExpired ? COLORS.warning : COLORS.success 
+                            backgroundColor: alert.isExpired ? COLORS.warning : COLORS.success
                           }
                         ]} />
                       </View>
@@ -599,6 +660,31 @@ const styles = StyleSheet.create({
   },
   placeholderIcon: {
     fontSize: 32,
+  },
+  bannerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  bannerTextCol: {
+    flex: 1,
+  },
+  radarCol: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radarWrapper: {
+    width: 90,
+    height: 90,
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radarSweep: {
+    width: 90,
+    height: 90,
+    position: 'absolute',
   },
 });
 
