@@ -6,6 +6,9 @@ import { User, Clock } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
 import Svg, { Circle, Line, Path, Defs, LinearGradient, Stop, Filter, FeGaussianBlur } from 'react-native-svg';
+import { getCachedDeal } from '../services/DealCache';
+import { Deal } from '../models/Deal';
+import { normalizeTitle } from '../utils/dealUtils';
 
 interface AlertItem {
   id: string;
@@ -190,6 +193,41 @@ const RadarAnimation = () => {
   );
 };
 
+// Helper to extract Steam App ID from URL
+function extractSteamAppId(url?: string): string | null {
+  if (!url) return null;
+  const match = url.match(/\/app\/(\d+)/i);
+  return match ? match[1] : null;
+}
+
+// Helper to extract Reddit post ID (e.g. 15x123) from a full ID or URL
+function extractRedditId(idOrUrl?: string): string | null {
+  if (!idOrUrl) return null;
+  
+  if (idOrUrl.includes('reddit.com') && idOrUrl.includes('/comments/')) {
+    const match = idOrUrl.match(/\/comments\/([a-z0-9]{5,8})/i);
+    if (match) return match[1];
+  }
+  
+  const lastPart = idOrUrl.split(':').pop() || '';
+  const cleanId = lastPart.replace('t3_', '').trim();
+  if (/^[a-z0-9]{5,10}$/i.test(cleanId) && !idOrUrl.startsWith('gp_')) {
+    return cleanId;
+  }
+  return null;
+}
+
+// Helper to clean URL for comparison
+function cleanUrlForComparison(url?: string): string {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    return (u.hostname + u.pathname).toLowerCase().replace(/\/$/, '');
+  } catch {
+    return url.toLowerCase().replace(/https?:\/\//, '').replace(/\/$/, '');
+  }
+}
+
 export default function AlertsScreen() {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
@@ -213,7 +251,102 @@ export default function AlertsScreen() {
             !/void runner x/i.test(alert.title) &&
             !/synthwave/i.test(alert.title)
           );
-          setAlerts(filtered);
+          // Retrieve current feed cache to instantly resolve thumbnails
+          const feedCacheRaw = await AsyncStorage.getItem('fgf_merged_feed_cache');
+          const feedDeals: Deal[] = feedCacheRaw ? JSON.parse(feedCacheRaw) : [];
+          // Asynchronously enrich alerts with cached deal thumbnails
+          const enrichedAlerts = await Promise.all(
+            filtered.map(async (alert: any) => {
+              if (!alert.coverImage) {
+                const alertRedditId = extractRedditId(alert.id) || extractRedditId(alert.actionUrl);
+                const alertCleanUrl = alert.actionUrl ? cleanUrlForComparison(alert.actionUrl) : '';
+                const alertNormTitle = normalizeTitle(alert.title);
+                const alertSteamAppId = extractSteamAppId(alert.actionUrl);
+
+                // 1. Try matching with active feed deals first (most up-to-date images)
+                let matchedImage: string | undefined = undefined;
+                let matchedDealId: string | undefined = undefined;
+
+                for (const deal of feedDeals) {
+                  // Match by ID exactly
+                  let isMatch = deal.id === alert.id;
+
+                  // Match by Reddit ID
+                  if (!isMatch && alertRedditId) {
+                    const dealRedditId = extractRedditId(deal.id) || extractRedditId(deal.redditUrl) || extractRedditId(deal.url);
+                    if (dealRedditId && dealRedditId === alertRedditId) {
+                      isMatch = true;
+                    }
+                  }
+
+                  // Match by Steam App ID
+                  if (!isMatch && alertSteamAppId) {
+                    const dealSteamAppId = extractSteamAppId(deal.url);
+                    if (dealSteamAppId && dealSteamAppId === alertSteamAppId) {
+                      isMatch = true;
+                    }
+                  }
+
+                  // Match by Clean URL
+                  if (!isMatch && alertCleanUrl) {
+                    const dealCleanUrl = deal.url ? cleanUrlForComparison(deal.url) : '';
+                    const dealRedditCleanUrl = deal.redditUrl ? cleanUrlForComparison(deal.redditUrl) : '';
+                    if (dealCleanUrl === alertCleanUrl || dealRedditCleanUrl === alertCleanUrl) {
+                      isMatch = true;
+                    }
+                  }
+
+                  // Match by Canonical Title & Platform
+                  if (!isMatch) {
+                    const dealNormTitle = normalizeTitle(deal.title);
+                    const isSamePlatform = 
+                      alert.platform.toLowerCase() === deal.platform.toLowerCase() ||
+                      (alert.platform.toLowerCase().includes('epic') && deal.platform.toLowerCase().includes('epic')) ||
+                      (alert.platform.toLowerCase().includes('steam') && deal.platform.toLowerCase().includes('steam'));
+                    if (isSamePlatform && alertNormTitle && alertNormTitle === dealNormTitle) {
+                      isMatch = true;
+                    }
+                  }
+
+                  if (isMatch) {
+                    matchedDealId = deal.id;
+                    if (deal.image && deal.image !== 'placeholder') {
+                      matchedImage = deal.image;
+                      break;
+                    }
+                  }
+                }
+
+                if (matchedImage) {
+                  return { ...alert, coverImage: matchedImage };
+                }
+
+                // 2. Fallback to DealCache
+                const cacheKeysToTry = new Set<string>();
+                cacheKeysToTry.add(alert.id);
+                if (alertRedditId) {
+                  cacheKeysToTry.add(alertRedditId);
+                  cacheKeysToTry.add(`t3_${alertRedditId}`);
+                }
+                if (matchedDealId) {
+                  cacheKeysToTry.add(matchedDealId);
+                }
+
+                for (const cacheKey of cacheKeysToTry) {
+                  try {
+                    const cachedDeal = await getCachedDeal(cacheKey);
+                    if (cachedDeal && cachedDeal.image && cachedDeal.image !== 'placeholder') {
+                      return { ...alert, coverImage: cachedDeal.image };
+                    }
+                  } catch (e) {
+                    console.warn(`[AlertsScreen] Error loading DealCache for key ${cacheKey}:`, e);
+                  }
+                }
+              }
+              return alert;
+            })
+          );
+          setAlerts(enrichedAlerts);
           if (filtered.length !== parsed.length) {
             await AsyncStorage.setItem('fgf_notification_logs_v2', JSON.stringify(filtered));
           }

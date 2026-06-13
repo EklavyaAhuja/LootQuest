@@ -34,6 +34,15 @@ class ExpiredFeedService {
   }
 
   /**
+   * Checks if the service will hit the network to fetch posts.
+   */
+  public async willFetch(forceRefresh = false): Promise<boolean> {
+    await this.initialize();
+    const now = Date.now();
+    return forceRefresh || this.expiredIds.size === 0 || (now - this.lastFetched >= CACHE_TTL);
+  }
+
+  /**
    * Fetches the expired flair RSS search feed from Reddit if expired or forced.
    */
   public async getExpiredPostIds(forceRefresh = false): Promise<Set<string>> {

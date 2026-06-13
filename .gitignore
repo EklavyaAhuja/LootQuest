@@ -1,42 +1,61 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
-
-# dependencies
+# ─── Dependencies ────────────────────────────────────────────────────────────
 node_modules/
 
-# Expo
+# ─── Expo ─────────────────────────────────────────────────────────────────────
 .expo/
 dist/
 web-build/
 expo-env.d.ts
 
-# Native
-.kotlin/
+# ─── EAS / Build ─────────────────────────────────────────────────────────────
+.easignore
+
+# ─── Native build output ─────────────────────────────────────────────────────
+/android
+/ios
 *.orig.*
+
+# ─── Secrets & Credentials ───────────────────────────────────────────────────
+.env
+.env.local
+.env*.local
 *.jks
 *.p8
 *.p12
 *.key
 *.mobileprovision
+*.keystore
+google-services.json
+GoogleService-Info.plist
+assets/google-services.json
 
-# Metro
+# ─── Metro ───────────────────────────────────────────────────────────────────
 .metro-health-check*
 
-# debug
+# ─── TypeScript ──────────────────────────────────────────────────────────────
+*.tsbuildinfo
+
+# ─── Debug / Logs ────────────────────────────────────────────────────────────
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+*.log
 
-# macOS
+# ─── OS noise ────────────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
 *.pem
 
-# local env files
-.env
-.env*.local
+# ─── IDE / Editor ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.user
+.claude/
+.gemini/
 
-# typescript
-*.tsbuildinfo
+# ─── Scratch / Dev notes ─────────────────────────────────────────────────────
+fixes.txt
 
-# generated native folders
-/ios
-/android
+# ─── Nested backend service (has its own repo) ────────────────────────────────
+/fgf-backend

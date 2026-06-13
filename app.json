@@ -2,15 +2,24 @@
   "expo": {
     "name": "LootQuest",
     "slug": "FreeGameFindings_App",
-    "version": "1.0.0",
+    "scheme": "lootquest",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/Icon_Latest.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.freegamefindings.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
+      }
     },
     "android": {
       "package": "com.freegamefindings.app",
+      "googleServicesFile": "./assets/google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#0B101E",
         "foregroundImage": "./assets/Icon_Latest.png"
@@ -21,9 +30,12 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "./plugins/withNotificationToolsReplace",
       "expo-font",
       "expo-secure-store",
       "expo-web-browser",
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging",
       [
         "expo-notifications",
         {

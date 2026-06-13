@@ -36,6 +36,9 @@ declare module 'lucide-react-native' {
   export const ShieldAlert: LucideIcon;
   export const ArrowRight: LucideIcon;
   export const Layers: LucideIcon;
+  export const SlidersHorizontal: LucideIcon;
+  export const ArrowUpDown: LucideIcon;
+
 
   export const Home: LucideIcon;
   export const Inbox: LucideIcon;
@@ -61,4 +64,7 @@ declare module 'lucide-react-native' {
   export const Tag: LucideIcon;
   export const Calendar: LucideIcon;
   export const WifiOff: LucideIcon;
+  export const Monitor: LucideIcon;
+  export const Smartphone: LucideIcon;
+  export const Globe: LucideIcon;
 }

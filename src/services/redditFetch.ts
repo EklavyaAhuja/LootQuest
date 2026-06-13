@@ -47,9 +47,14 @@ async function hydrateRateLimitState(): Promise<void> {
 }
 
 async function recordRateLimit(): Promise<void> {
+  const now = Date.now();
+  if (_rateLimitUntil > now) {
+    // Already in cooldown, do not increment strike count
+    return;
+  }
   _rateLimitCount = Math.min(_rateLimitCount + 1, 6); // cap exponent at 6
   const cooldownMs = Math.min(MIN_COOLDOWN_MS * Math.pow(2, _rateLimitCount - 1), MAX_COOLDOWN_MS);
-  _rateLimitUntil = Date.now() + cooldownMs;
+  _rateLimitUntil = now + cooldownMs;
   try {
     await Promise.all([
       AsyncStorage.setItem(RATE_LIMIT_KEY, String(_rateLimitUntil)),
@@ -62,7 +67,7 @@ async function recordRateLimit(): Promise<void> {
   console.warn(`[redditFetch] Rate limited by Reddit (429). Backing off for ${mins} min (strike ${_rateLimitCount}).`);
 }
 
-async function clearRateLimit(): Promise<void> {
+export async function clearRedditRateLimit(): Promise<void> {
   if (_rateLimitCount === 0) return; // already clear
   _rateLimitUntil = 0;
   _rateLimitCount = 0;
@@ -71,6 +76,7 @@ async function clearRateLimit(): Promise<void> {
       AsyncStorage.removeItem(RATE_LIMIT_KEY),
       AsyncStorage.removeItem(RATE_LIMIT_COUNT_KEY),
     ]);
+    console.log('[redditFetch] Reddit rate limit cooldown cleared.');
   } catch {
     // non-fatal
   }
@@ -116,9 +122,19 @@ export async function redditFetch(url: string, extraHeaders?: Record<string, str
   let lastError: Error = new Error('Unknown error');
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (isRateLimited()) {
+      const mins = Math.round(rateLimitRemainingMs() / 60_000);
+      throw new Error(`Reddit rate-limited – cooldown ${mins} min remaining`);
+    }
+
     if (attempt > 0) {
       const delay = jitter(BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1));
       await sleep(delay);
+
+      if (isRateLimited()) {
+        const mins = Math.round(rateLimitRemainingMs() / 60_000);
+        throw new Error(`Reddit rate-limited – cooldown ${mins} min remaining`);
+      }
     }
 
     try {
@@ -145,7 +161,7 @@ export async function redditFetch(url: string, extraHeaders?: Record<string, str
       }
 
       // Success – clear any previous rate-limit strike counter
-      await clearRateLimit();
+      await clearRedditRateLimit();
       return response;
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err));

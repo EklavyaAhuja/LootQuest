@@ -282,7 +282,7 @@ export default function SettingsScreen() {
         </View>
         <View style={styles.devNoteContent}>
           <Text style={styles.devNoteParagraph}>
-            LootQuest started as a tool I built for myself because I kept missing free game giveaways.
+            LootQuest started as a tool I built for myself because I kept missing free giveaways.
           </Text>
           <Text style={styles.devNoteParagraph}>
             Over time, I kept adding things I wished existed, and somehow it turned into a full app.
@@ -304,7 +304,7 @@ export default function SettingsScreen() {
       {/* ── Version Footer ── */}
       <View style={styles.versionFooter}>
         <Text style={styles.versionAppName}>LOOTQUEST</Text>
-        <Text style={styles.versionText}>Version 1.4.2 (Beta)</Text>
+        <Text style={styles.versionText}>Version 1.1.0 (Beta)</Text>
       </View>
 
     </ScrollView>

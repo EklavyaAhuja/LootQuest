@@ -26,9 +26,68 @@ export interface ParsedBotData {
  * 3. Bold title match
  * 4. Fallback extraction
  */
+function findNavigationLineIndex(lines: string[]): number {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const lower = line.toLowerCase();
+    if (line.includes('|') && 
+        lower.includes('store page') && 
+        !lower.includes('i am a bot') && 
+        !lower.startsWith('reviews:') && 
+        !lower.startsWith('gog reviews:') && 
+        !lower.startsWith('steam reviews:')) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function findGiveawayStartIndex(lines: string[]): number {
+  for (let i = 0; i < lines.length; i++) {
+    const lower = lines[i].toLowerCase().replace(/\*/g, '');
+    if (
+      lower.startsWith('giveaway details') ||
+      lower.startsWith('required accounts:') ||
+      lower.startsWith('tasks:') ||
+      lower.startsWith('links:')
+    ) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function extractTitleFromNavigation(lines: string[]): string | null {
+  const navIndex = findNavigationLineIndex(lines);
+  if (navIndex > 0) {
+    for (let i = navIndex - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (line.length > 0) {
+        const cleanVal = line.replace(/\*\*|#|__|`/g, '').trim();
+        return cleanVal;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Extracts the game/giveaway title from the FGF_Info_Bot comment using a priority sequence:
+ * 1. Title extracted relative to the navigation line (if present)
+ * 2. First standalone game title line
+ * 3. Store Page heading title
+ * 4. Bold title match
+ * 5. Fallback extraction
+ */
 export function extractTitleFromLines(lines: string[]): string | null {
   const cleanLines = lines.map(line => line.trim()).filter(l => l.length > 0);
   if (cleanLines.length === 0) return null;
+
+  // Try using the navigation line index first (most robust)
+  const navTitle = extractTitleFromNavigation(cleanLines);
+  if (navTitle) {
+    return navTitle;
+  }
 
   const isLabelOrSignature = (line: string) => {
     const lower = line.replace(/\*/g, '').toLowerCase();
@@ -224,16 +283,20 @@ function isStructuredLabelLine(line: string): boolean {
  *   Line 5: Price: ...
  *   ...
  *
- * Strategy: scan ALL lines. Skip title (first non-skip line), navigation (|),
- * labeled lines, URLs, and bot signature. Collect everything else that falls
- * before the "Price:" line.
+ * Strategy: scan lines starting AFTER the navigation line (if present).
+ * Skip labeled metadata lines, reviews, navigation, and bot signature.
+ * Collect everything else before the "Price:" line.
  */
 function extractAboutGame(lines: string[]): string | null {
-  const descLines: string[] = [];
-  let titleSkipped = false;
+  const cleanLines = lines.map(line => line.trim());
+  const navIndex = findNavigationLineIndex(cleanLines);
 
-  for (const line of lines) {
-    const trimmed = line.trim();
+  const descLines: string[] = [];
+  const startIndex = navIndex !== -1 ? navIndex + 1 : 0;
+  let titleSkipped = navIndex !== -1;
+
+  for (let i = startIndex; i < cleanLines.length; i++) {
+    const trimmed = cleanLines[i];
     if (!trimmed) continue;
 
     // Stop collecting once we hit the Price: line
@@ -279,29 +342,32 @@ function extractAboutGame(lines: string[]): string | null {
  * Looks for the giveaway section starting with Giveaway details / Required accounts / Tasks.
  */
 function extractInstructions(lines: string[]): string | null {
-  const instrLines: string[] = [];
-  let inGiveawaySection = false;
+  const cleanLines = lines.map(line => line.trim());
+  const navIndex = findNavigationLineIndex(cleanLines);
+  const giveawayStartIndex = findGiveawayStartIndex(cleanLines);
 
-  for (const line of lines) {
-    const trimmed = line.trim();
+  if (giveawayStartIndex === -1) {
+    return null;
+  }
+
+  const isGiveawayAtTop = navIndex !== -1 && giveawayStartIndex < navIndex;
+  const instrLines: string[] = [];
+
+  for (let i = giveawayStartIndex; i < cleanLines.length; i++) {
+    const trimmed = cleanLines[i];
     if (!trimmed) continue;
 
     const lower = trimmed.toLowerCase().replace(/\*/g, '');
 
-    // Detect the start of the giveaway section
-    if (
-      lower.startsWith('giveaway details') ||
-      lower.startsWith('required accounts:') ||
-      lower.startsWith('tasks:') ||
-      lower.startsWith('links:')
-    ) {
-      inGiveawaySection = true;
+    // Stop if giveaway is at the top and we reached the game title/navigation
+    if (isGiveawayAtTop && navIndex !== -1 && i >= navIndex - 1) {
+      break;
     }
 
-    if (!inGiveawaySection) continue;
-
     // Stop at bot signature
-    if (lower.includes('beep boop') || lower.includes('i am a bot')) break;
+    if (lower.includes('beep boop') || lower.includes('i am a bot')) {
+      break;
+    }
 
     // Strip markdown and collect
     const cleanLine = trimmed.replace(/^[#*_`]+/, '').replace(/[#*_`]+$/, '').trim();

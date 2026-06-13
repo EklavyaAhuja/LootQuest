@@ -1,27 +1,31 @@
 export const COLORS = {
-  bg: '#0b101e', // Base background (Level 0 canvas)
-  text: '#dee2f6', // Light text (on-surface)
-  border: '#334155', // Card borders
-  white: '#1e293b', // Card/Surface background (Level 1 container)
+  bg: '#131313', // Base background (Level 0 canvas)
+  text: '#e5e2e1', // Light text (on-surface)
+  border: 'rgba(255, 255, 255, 0.05)', // Card borders
+  white: '#222222', // Card/Surface background (Level 1 container)
   shadow: '#000000',
 
-  // Accent colors from Neon Syndicate
-  primary: '#39ff14', // Neon Green (Primary branding/success)
-  secondary: '#00e3fd', // Cyan Tech (Secondary tags/interactions)
-  accent: '#f6d1ff', // Lavender/Purple (Tertiary accent)
-  success: '#39ff14', // Neon Green (Success state)
-  warning: '#ffd600', // Electric Yellow (Warning state)
+  // Accent colors from Stitch Companion Quest
+  primary: '#ddb7ff', // Vibrant Purple (Primary branding)
+  secondary: '#5de6ff', // Cyan (Secondary tags/interactions)
+  accent: '#ddb7ff', // Purple accent
+  success: '#4de082', // Green (Success/Claimed state)
+  warning: '#FF2449', // Loot Red (Ending Soon/Alerts)
   danger: '#ffb4ab', // Error Red
-  lightBg: '#161b2a', // Lower surface container
+  lightBg: '#1c1b1b', // Lower surface container (surface-container-low)
 
   // Stitch Tonal Layers
-  surfaceLowest: '#090e1c',
-  surfaceLow: '#161b2a',
-  surface: '#0e1321',
-  surfaceHigh: '#252a39',
-  surfaceHighest: '#303444',
+  surfaceLowest: '#0e0e0e', // surface-container-lowest
+  surfaceLow: '#1c1b1b', // surface-container-low
+  surface: '#201f1f', // surface-container
+  surfaceHigh: '#2a2a2a', // surface-container-high
+  surfaceHighest: '#353534', // surface-container-highest
+  surfaceCharcoal: '#222222', // surface-charcoal
+  surfaceBright: '#393939', // surface-bright
 
-  onSurfaceVariant: '#baccb0',
+  onSurfaceVariant: '#cfc2d6',
+  textMuted: '#858585',
+  lootRed: '#FF2449',
 
   // Platform Specific Pastel-Cartoon colors (adapted for dark mode cards)
   platform: {
@@ -67,15 +71,16 @@ export function getPlatformColor(platform: string): string {
 }
 
 export const FONTS = {
-  // Headlines and badges
-  bold: 'Quicksand_700Bold',
-  headlineMedium: 'Quicksand_600SemiBold',
-  headlineRegular: 'Quicksand_500Medium',
+  // Headlines and badges matching Stitch Plus Jakarta Sans
+  bold: 'PlusJakartaSans_700Bold',
+  headlineMedium: 'PlusJakartaSans_600SemiBold',
+  headlineRegular: 'PlusJakartaSans_500Medium',
+  extraBold: 'PlusJakartaSans_800ExtraBold',
 
   // Body text
-  medium: 'DMSans_500Medium',
-  regular: 'DMSans_400Regular',
-  bodyBold: 'DMSans_700Bold',
+  medium: 'PlusJakartaSans_500Medium',
+  regular: 'PlusJakartaSans_400Regular',
+  bodyBold: 'PlusJakartaSans_700Bold',
 
   // HUD and metadata tags
   mono: 'SpaceMono_700Bold',

@@ -86,7 +86,6 @@ interface VaultScreenProps {
 export default function VaultScreen({ onDealSelect }: VaultScreenProps) {
   const [claimedGames, setClaimedGames] = useState<Deal[]>([]);
   const [trackedGames, setTrackedGames] = useState<Deal[]>([]);
-  const [filter, setFilter] = useState<'all' | 'claimed' | 'tracking'>('all');
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
 
   const handleImageError = (postId: string) => {
@@ -185,15 +184,11 @@ export default function VaultScreen({ onDealSelect }: VaultScreenProps) {
   };
 
 
-  // Combine lists based on active filter
+  // Combine claimed and tracked lists
   const displayedItems = (() => {
     const list: { deal: Deal; status: 'CLAIMED' | 'TRACKING' }[] = [];
-    if (filter === 'all' || filter === 'claimed') {
-      claimedGames.forEach((d) => list.push({ deal: d, status: 'CLAIMED' }));
-    }
-    if (filter === 'all' || filter === 'tracking') {
-      trackedGames.forEach((d) => list.push({ deal: d, status: 'TRACKING' }));
-    }
+    claimedGames.forEach((d) => list.push({ deal: d, status: 'CLAIMED' }));
+    trackedGames.forEach((d) => list.push({ deal: d, status: 'TRACKING' }));
     return list;
   })();
 
@@ -227,33 +222,7 @@ export default function VaultScreen({ onDealSelect }: VaultScreenProps) {
           </View>
         </View>
 
-        {/* Filter Chips */}
-        <View style={styles.filterRow}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipScroll}>
-            {[
-              { key: 'all', title: 'All Loot' },
-              { key: 'claimed', title: 'Claimed' },
-              { key: 'tracking', title: 'Tracking' },
-            ].map((item) => {
-              const isActive = filter === item.key;
-              return (
-                <BouncyPressable
-                  key={item.key}
-                  onPress={() => setFilter(item.key as any)}
-                  backgroundColor={isActive ? COLORS.primary : COLORS.surfaceCharcoal}
-                  borderRadius={20}
-                  shadowOffsetSize={0}
-                  style={styles.filterChipWrapper}
-                  contentStyle={[styles.filterChip, !isActive && { borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }]}
-                >
-                  <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
-                    {item.title}
-                  </Text>
-                </BouncyPressable>
-              );
-            })}
-          </ScrollView>
-        </View>
+
 
         {/* Grid of Cards */}
         {displayedItems.length === 0 ? (

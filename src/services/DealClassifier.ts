@@ -3,12 +3,14 @@ import { Deal } from '../models/Deal';
 import { expiredFeedService } from './ExpiredFeedService';
 import { tasksFeedService } from './TasksFeedService';
 import { parseExpiryFromPostBody, getExpiryStatus, checkIsFullyFree } from './FGFBotParser';
+import { isDealExpired, getTimeLeft, determineClaimMethod, getCleanPlatform } from '../utils/dealUtils';
 
-export function classifyDeal(title: string, description: string): {
+export function classifyDeal(title: string, description: string, platform?: string): {
   type: Deal['type'];
   claimMethod: Deal['claimMethod'];
 } {
   const text = `${title} ${description}`.toLowerCase();
+  const plat = (platform || '').toLowerCase();
 
   // 1. Detect Type
   let type: Deal['type'] = 'full_game';
@@ -16,8 +18,19 @@ export function classifyDeal(title: string, description: string): {
   const dlcKeywords = ['dlc', 'expansion', 'add-on', 'addon', 'season pass'];
   const betaKeywords = ['beta', 'playtest', 'test build', 'alpha'];
   const itemKeywords = ['skin', 'weapon', 'mount', 'currency', 'coins', 'pack', 'in-game content'];
+  const mobileKeywords = ['android', 'ios', 'mobile', 'google play', 'app store', 'iphone', 'ipad', 'apk'];
 
-  if (dlcKeywords.some(kw => text.includes(kw))) {
+  if (
+    plat.includes('android') ||
+    plat.includes('ios') ||
+    plat.includes('mobile') ||
+    plat.includes('google play') ||
+    plat.includes('app store')
+  ) {
+    type = 'mobile_game';
+  } else if (mobileKeywords.some(kw => text.includes(kw))) {
+    type = 'mobile_game';
+  } else if (dlcKeywords.some(kw => text.includes(kw))) {
     type = 'dlc';
   } else if (betaKeywords.some(kw => text.includes(kw))) {
     type = 'beta';
@@ -28,17 +41,8 @@ export function classifyDeal(title: string, description: string): {
   }
 
   // 2. Detect Claim Method
-  let claimMethod: Deal['claimMethod'] = 'one_click';
+  const claimMethod = determineClaimMethod(description, title, platform);
   
-  const taskKeywords = ['gleam', 'discord', 'follow', 'retweet', 'survey', 'watch stream', 'tasks', 'join group', 'complete', 'subscribe'];
-  const oneClickKeywords = ['steam', 'epic', 'gog', 'claim now', 'free now', 'add to library', 'direct claim'];
-
-  if (taskKeywords.some(kw => text.includes(kw))) {
-    claimMethod = 'tasks';
-  } else if (oneClickKeywords.some(kw => text.includes(kw))) {
-    claimMethod = 'one_click';
-  }
-
   return { type, claimMethod };
 }
 
@@ -46,27 +50,60 @@ export function classifyDeal(title: string, description: string): {
  * Maps a RedditPost to a basic Deal object instantly.
  */
 export function postToBasicDeal(post: RedditPost): Deal {
-  const { type, claimMethod } = classifyDeal(post.title, post.selftext);
+  const anyPost = post as any;
+  const selftext = post.selftext || anyPost.description || '';
+  const title = post.title || anyPost.title || '';
+  const platform = post.platform || anyPost.platform || '';
+  const url = post.url || anyPost.url || '';
+  
+  const { type, claimMethod } = classifyDeal(title, selftext, platform);
   const isExpiredFromFlair = expiredFeedService.isExpired(post.id);
   const isTaskFromFlair = tasksFeedService.isTask(post.id);
-  const isFree = checkIsFullyFree(post.title, post.selftext);
-  const postBodyExpiry = isFree ? (parseExpiryFromPostBody(post.selftext) || undefined) : undefined;
+  const isFree = checkIsFullyFree(title, selftext);
+  const postBodyExpiry = isFree ? (parseExpiryFromPostBody(selftext) || undefined) : undefined;
 
-  return {
+  const mappedDeal: Deal = {
     id: post.id,
-    title: post.cleanTitle || post.title,
-    platform: post.platform,
+    title: post.cleanTitle || title,
+    platform: getCleanPlatform(platform, title, selftext, url),
     type,
     claimMethod: isTaskFromFlair ? 'tasks' : claimMethod,
-    image: post.coverImage,
-    url: post.url,
-    author: post.author,
-    description: post.selftext || undefined,
-    expiresAt: postBodyExpiry,
-    expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (postBodyExpiry ? getExpiryStatus(postBodyExpiry) : undefined),
-    isNsfw: post.isNsfw,
-    createdAt: post.createdAt,
-    redditUrl: post.permalink,
+    image: post.coverImage || anyPost.image,
+    url: url,
+    author: post.author || anyPost.author,
+    description: selftext || undefined,
+    expiresAt: postBodyExpiry || anyPost.expiresAt,
+    expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (postBodyExpiry ? getExpiryStatus(postBodyExpiry) : (anyPost.expiryStatus || undefined)),
+    isNsfw: post.isNsfw || anyPost.isNsfw,
+    createdAt: post.createdAt || anyPost.createdAt,
+    redditUrl: post.permalink || anyPost.redditUrl,
+    source: post.domain ? 'reddit' : (anyPost.source || 'reddit'),
+    platforms: platform ? platform.split('/').map((p: string) => p.trim()) : (anyPost.platforms || []),
+    releaseDate: post.createdAt || anyPost.createdAt
+      ? new Date(post.createdAt || anyPost.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+      : (anyPost.releaseDate || "N/A"),
   };
+
+  mappedDeal.isExpired = isExpiredFromFlair || isDealExpired(mappedDeal);
+  mappedDeal.timeLeft = getTimeLeft(mappedDeal.expiresAt || mappedDeal.endDate || anyPost.endDate);
+  
+  if (mappedDeal.isExpired) {
+    mappedDeal.expiryStatus = 'EXPIRED';
+  }
+
+  // Preserve enriched details if input is already a Deal or has them
+  if (anyPost.originalPrice !== undefined) mappedDeal.originalPrice = anyPost.originalPrice;
+  if (anyPost.worth !== undefined) mappedDeal.worth = anyPost.worth;
+  if (anyPost.currentPrice !== undefined) mappedDeal.currentPrice = anyPost.currentPrice;
+  if (anyPost.developer !== undefined) mappedDeal.developer = anyPost.developer;
+  if (anyPost.aboutGame !== undefined) mappedDeal.aboutGame = anyPost.aboutGame;
+  if (anyPost.instructions !== undefined) mappedDeal.instructions = anyPost.instructions;
+  if (anyPost.genres !== undefined) mappedDeal.genres = anyPost.genres;
+  if (anyPost.achievements !== undefined) mappedDeal.achievements = anyPost.achievements;
+  if (anyPost.tradingCards !== undefined) mappedDeal.tradingCards = anyPost.tradingCards;
+  if (anyPost.reviewScore !== undefined) mappedDeal.reviewScore = anyPost.reviewScore;
+  if (anyPost.steamDbRating !== undefined) mappedDeal.steamDbRating = anyPost.steamDbRating;
+
+  return mappedDeal;
 }
 

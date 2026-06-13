@@ -313,11 +313,12 @@ export async function fetchMergedGameFeed(
   limit: number = 30,
   after?: string,
   forceRefresh = false
-): Promise<{ deals: Deal[]; after?: string; gpFailed?: boolean }> {
+): Promise<{ deals: Deal[]; after?: string; gpFailed?: boolean; redditFetchedLive?: boolean }> {
   let redditPosts: RedditPost[] = [];
   let redditAfterCursor: string | undefined = undefined;
   let gpDeals: Deal[] = [];
   let gpFailed = false;
+  let redditFetchedLive = false;
 
   // 1. Fetch Reddit posts (subject to 5-minute client-side cooldown on page 1)
   try {
@@ -346,6 +347,10 @@ export async function fetchMergedGameFeed(
       const redditResult = await fetchRedditPostsPaginated(feedType, limit, after);
       redditPosts = redditResult.posts;
       redditAfterCursor = redditResult.after;
+      
+      if (isPage1) {
+        redditFetchedLive = true;
+      }
 
       if (isPage1 && redditPosts.length > 0) {
         await AsyncStorage.setItem('reddit_posts_cache', JSON.stringify(redditPosts));
@@ -354,6 +359,7 @@ export async function fetchMergedGameFeed(
     }
   } catch (err) {
     console.warn('[RedditService] Supplemental Reddit fetch failed:', err);
+    redditFetchedLive = false;
   }
 
   // 2. Fetch GamerPower (Always fetch to merge and enrich with Reddit deals on every page)
@@ -374,6 +380,7 @@ export async function fetchMergedGameFeed(
     deals: uniqueDeals,
     after: redditAfterCursor,
     gpFailed,
+    redditFetchedLive,
   };
 }
 

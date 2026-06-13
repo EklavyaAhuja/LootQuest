@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -10,27 +10,36 @@ import {
   RefreshControl,
   Image,
   Pressable,
+  Modal,
+  Platform,
 } from 'react-native';
-import { fetchFreeGameFindings } from '../services/redditService';
+import { fetchMergedGameFeed } from '../services/redditService';
 import { Deal } from '../models/Deal';
-import { postToBasicDeal } from '../services/DealClassifier';
-import { dealEnrichmentService } from '../services/DealEnrichmentService';
 import { expiredFeedService } from '../services/ExpiredFeedService';
 import { tasksFeedService } from '../services/TasksFeedService';
-import { getAppSettings, getSeenPosts, addSeenPosts } from '../services/storageService';
-import { sendFreeGameNotification, addAlertLog } from '../services/notificationService';
+import { addSeenPosts, getClaimedPosts, getTrackedPosts } from '../services/storageService';
 import { COLORS, FONTS, getPlatformColor } from '../theme/theme';
 import BouncyPressable from '../components/BouncyPressable';
-import { Search, RotateCcw } from 'lucide-react-native';
+import { Search, RotateCcw, SlidersHorizontal, ArrowUpDown, X, Check, Monitor, Gamepad, Smartphone, Globe } from 'lucide-react-native';
+import { filterDeals, mergeAndDeduplicateDeals } from '../services/filterUtils';
+import { dealEnrichmentService } from '../services/DealEnrichmentService';
+import { isDealExpired, getTimeLeft, isDealClaimed } from '../utils/dealUtils';
+import HourglassLoader from '../components/HourglassLoader';
+import StoreIcon from '../components/StoreIcon';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isRedditRateLimited, clearRedditRateLimit } from '../services/redditFetch';
+import { getCachedDeal, removeCachedDeal } from '../services/DealCache';
 
 interface FeedScreenProps {
   onDealSelect: (deal: Deal) => void;
-  claimedPostIds?: string[];
+  claimedDeals?: Deal[];
   onNewAlerts?: (count: number) => void;
   onConnectionError?: () => void;
 }
 
-const PLATFORMS_FILTER = ['All', 'Steam', 'Epic Games', 'GOG', 'itch.io', 'Playstation', 'Xbox'];
+const PLATFORMS_FILTER = ['All', 'Steam', 'Epic Games', 'GOG', 'itch.io', 'Playstation', 'Xbox', 'Mobile', 'Stove', 'Alienware Arena'];
+const CATEGORIES_FILTER = ['All', 'Game', 'DLC', 'Beta', 'Mobile Game'];
+const CLAIM_METHODS_FILTER = ['All', 'One-Click', 'Tasks Required'];
 
 const COVER_IMAGES = [
   'https://images.unsplash.com/photo-1538481199705-c710c4e965fc?auto=format&fit=crop&w=600&q=80',
@@ -39,94 +48,370 @@ const COVER_IMAGES = [
   'https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=600&q=80',
 ];
 
-export default function FeedScreen({ onDealSelect, claimedPostIds = [], onNewAlerts, onConnectionError }: FeedScreenProps) {
+const getDisplayType = (type: Deal['type']) => {
+  switch (type) {
+    case 'full_game': return 'GAME';
+    case 'dlc': return 'DLC';
+    case 'beta': return 'BETA';
+    case 'item': return 'ITEM';
+    case 'mobile_game': return 'MOBILE';
+    case 'loot': return 'LOOT';
+    default: return 'GAME';
+  }
+};
+
+const getPlatformIcon = (platform: string) => {
+  return <StoreIcon platform={platform} size={12} color={COLORS.textMuted} style={{ marginRight: 4 }} />;
+};
+
+// Memoized Card Component for performance
+interface DealCardProps {
+  item: Deal;
+  isClaimed: boolean;
+  onPress: (deal: Deal) => void;
+  getGameCover: (id: string) => string;
+  hasImageError: boolean;
+  handleImageError: (id: string) => void;
+}
+
+const DealCard = React.memo(({
+  item,
+  isClaimed,
+  onPress,
+  getGameCover,
+  hasImageError,
+  handleImageError,
+}: DealCardProps) => {
+  const isExpired = item.isExpired || item.expiryStatus === 'EXPIRED';
+  const displayType = getDisplayType(item.type);
+  const timeLeft = item.timeLeft || 'LIVE NOW';
+
+  // Calculate progress percent (mocked for visual flair since we don't have start date always)
+  const timeLeftUpper = timeLeft.toUpperCase();
+  const isEndingSoon = (timeLeftUpper.includes('H') || timeLeftUpper.includes('M') || timeLeftUpper.includes('MIN') || timeLeftUpper.includes('AGO')) && !timeLeftUpper.includes('D') && !timeLeftUpper.includes('NO EXPIRY');
+  const progressPercent = isExpired ? 100 : (isEndingSoon ? 85 : 30);
+
+  return (
+    <View style={[styles.questCard, isExpired && styles.expiredItemCard]}>
+      {/* Cover Image sitting on top */}
+      <View style={styles.cardImageContainer}>
+        <Image 
+          source={{ uri: (!hasImageError && item.image && item.image !== 'placeholder') ? item.image : getGameCover(item.id) }} 
+          style={styles.cardImage} 
+          blurRadius={item.isNsfw ? 15 : 0}
+          onError={() => handleImageError(item.id)}
+        />
+        <View style={styles.cardImageGradient} />
+        {item.isNsfw && (
+          <View style={styles.nsfwThumbOverlay}>
+            <Text style={styles.nsfwThumbText}>NSFW</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Content Section overlapping image */}
+      <View style={styles.cardContent}>
+        {/* Title */}
+        <Text style={[styles.questTitle, isExpired && styles.expiredTitle]}>
+          {item.title}
+        </Text>
+
+        {/* Status Block */}
+        <View style={styles.statusBlock}>
+          <View style={styles.statusRow}>
+            <View style={styles.timerWrapper}>
+              <Text style={[
+                styles.timerIconText, 
+                { color: isExpired ? COLORS.warning : (isEndingSoon ? COLORS.warning : COLORS.success) }
+              ]}>🕒</Text>
+              <Text style={[
+                styles.timerText, 
+                { color: isExpired ? COLORS.warning : (isEndingSoon ? COLORS.warning : COLORS.success) }
+              ]}>
+                {isExpired ? 'EXPIRED' : timeLeft.toUpperCase()}
+              </Text>
+            </View>
+            <Text style={[
+              styles.statusLabel,
+              { color: isExpired ? COLORS.warning : (isEndingSoon ? COLORS.warning : COLORS.success) }
+            ]}>
+              {isExpired ? 'ENDED' : (isEndingSoon ? 'Ending Soon' : 'LIVE')}
+            </Text>
+          </View>
+          
+          {/* Expiry Progress Bar */}
+          <View style={styles.progressBarBg}>
+            <View style={[
+              styles.progressBarFill, 
+              { 
+                width: `${progressPercent}%`,
+                backgroundColor: isExpired ? COLORS.warning : (isEndingSoon ? COLORS.warning : COLORS.success) 
+              }
+            ]} />
+          </View>
+        </View>
+
+        {/* Badges Row */}
+        <View style={styles.badgesRow}>
+          <View style={styles.badgeItem}>
+            {getPlatformIcon(item.platform)}
+            <Text style={styles.badgeItemText}>{item.platform.toUpperCase()}</Text>
+          </View>
+          <View style={styles.badgeItem}>
+            <Text style={styles.badgeItemText}>{displayType}</Text>
+          </View>
+          {item.claimMethod === 'tasks' && (
+            <View style={styles.badgeItemTasks}>
+              <Text style={styles.badgeItemTasksText}>TASKS</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Bottom row: Claimed count & Claim button */}
+        <View style={styles.cardFooter}>
+          <Text style={styles.claimedCountText}>
+            👥 {item.claimedUsers ? item.claimedUsers.toLocaleString() : '--'} claimed
+          </Text>
+
+          <BouncyPressable
+            onPress={() => onPress(item)}
+            backgroundColor={isExpired ? '#444' : (isClaimed ? COLORS.success : COLORS.primary)}
+            borderRadius={20}
+            shadowOffsetSize={0}
+            style={styles.claimButton}
+            contentStyle={styles.claimButtonContent}
+          >
+            <Text style={[
+              styles.claimButtonText,
+              { color: isExpired ? '#aaa' : (isClaimed ? '#131313' : '#490080') }
+            ]}>
+              {isExpired ? 'EXPIRED' : (isClaimed ? 'CLAIMED' : 'CLAIM')}
+            </Text>
+          </BouncyPressable>
+        </View>
+      </View>
+    </View>
+  );
+});
+
+export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlerts, onConnectionError }: FeedScreenProps) {
   const [posts, setPosts] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
-
-  const handleImageError = (id: string) => {
-    setImageErrors(prev => ({ ...prev, [id]: true }));
-  };
   
-  // Filters
-  const [search, setSearch] = useState('');
-  const [selectedPlatform, setSelectedPlatform] = useState('All');
+  // Pagination & Merging states
+  const [after, setAfter] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [gpFailed, setGpFailed] = useState(false);
 
-  const loadPosts = async (type: 'hot' | 'new' = 'new', isRefreshing = false) => {
-    if (isRefreshing) {
-      setRefreshing(true);
-    } else {
-      setLoading(true);
+  // Modals Visibility
+  const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
+  const [isSortModalVisible, setIsSortModalVisible] = useState(false);
+
+  // Filters State
+  const [search, setSearch] = useState('');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(['All']);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(['All']);
+  const [selectedClaimMethod, setSelectedClaimMethod] = useState('All');
+  const [showExpired, setShowExpired] = useState(false);
+  const [selectedClaimStatus, setSelectedClaimStatus] = useState<'All' | 'Claimed' | 'Unclaimed'>('All');
+
+  // Sorting State
+  const [sortByField, setSortByField] = useState<'start_date' | 'claims' | 'price' | 'release' | 'end_date'>('start_date');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  const handleImageError = useCallback((id: string) => {
+    setImageErrors(prev => ({ ...prev, [id]: true }));
+  }, []);
+
+  const getGameCover = useCallback((id: string) => {
+    let sum = 0;
+    for (let i = 0; i < id.length; i++) {
+      sum += id.charCodeAt(i);
     }
+    return COVER_IMAGES[sum % COVER_IMAGES.length];
+  }, []);
+
+  const startBackgroundSyncQueue = async (deals: Deal[], isRefreshing: boolean) => {
+    console.log('[BackgroundSync] Initializing background sync queue...');
+    
+    // 1. Single gate check
+    const isRateLimited = await isRedditRateLimited();
+    if (isRateLimited) {
+      console.log('[BackgroundSync] Reddit is rate-limited. Skipping background sync queue silently.');
+      return;
+    }
+
     try {
-      // 1. Fetch expired posts Set in background/foreground (highest priority source)
+      // Step 2 & 3 — Sequential execution
+      console.log('[BackgroundSync] Starting Expired feed sync...');
       await expiredFeedService.getExpiredPostIds(isRefreshing);
-      // Fetch tasks posts Set in background/foreground
+      
+      if (await isRedditRateLimited()) {
+        console.log('[BackgroundSync] Reddit became rate-limited after Expired sync. Aborting.');
+        return;
+      }
+      
+      console.log('[BackgroundSync] Staggering (waiting 2.5s)...');
+      await new Promise(resolve => setTimeout(resolve, 2500));
+
+      console.log('[BackgroundSync] Starting Tasks feed sync...');
       await tasksFeedService.getTasksPostIds(isRefreshing);
 
-      // 2. Fetch standard feed
-      const data = await fetchFreeGameFindings(type, 40);
-      const basicDeals = data.map(postToBasicDeal);
-      setPosts(basicDeals);
+      if (await isRedditRateLimited()) {
+        console.log('[BackgroundSync] Reddit became rate-limited after Tasks sync. Aborting.');
+        return;
+      }
 
-      // Check for new posts (for alerts & push notifications)
-      const seenIds = await getSeenPosts();
-      const settings = await getAppSettings();
+      console.log('[BackgroundSync] Staggering (waiting 2.5s)...');
+      await new Promise(resolve => setTimeout(resolve, 2500));
 
-      if (seenIds.length > 0) {
-        const newPosts = data.filter((post) => {
-          if (seenIds.includes(post.id)) return false;
-
-          // Filter by platform
-          if (settings.notificationPlatforms.length > 0) {
-            const matchesPlatform = settings.notificationPlatforms.some((plat) =>
-              post.platform.toLowerCase().includes(plat.toLowerCase())
-            );
-            if (!matchesPlatform) return false;
-          }
-
-          // Filter by type
-          if (settings.notificationTypes.length > 0) {
-            const matchesType = settings.notificationTypes.some((t) =>
-              post.type.toLowerCase().includes(t.toLowerCase())
-            );
-            if (!matchesType) return false;
-          }
-
-          return true;
-        });
-
-        if (newPosts.length > 0) {
-          // Send local push notification for each new post (if notifications are enabled)
-          if (settings.notificationsEnabled) {
-            for (const post of [...newPosts].reverse()) {
-              await sendFreeGameNotification(post);
-            }
-          }
-
-          // Log alert logs
-          for (const post of [...newPosts].reverse()) {
-            await addAlertLog(post);
-          }
-
-          if (onNewAlerts) {
-            onNewAlerts(newPosts.length);
+      // Build comments prefetch batch
+      // Current merged feed (up to 25 Reddit posts, newest-first)
+      const redditPosts = deals.filter(d => !d.id.startsWith('gp_')).slice(0, 25);
+      
+      // Find up to 5 posts that are not yet cached
+      const unCachedRedditPosts: Deal[] = [];
+      for (const deal of redditPosts) {
+        const cached = await getCachedDeal(deal.id);
+        if (!cached) {
+          unCachedRedditPosts.push(deal);
+          if (unCachedRedditPosts.length >= 5) {
+            break;
           }
         }
       }
 
-      // Mark all fetched posts as seen
-      const allFetchedIds = data.map(p => p.id);
+      console.log(`[BackgroundSync] Found ${unCachedRedditPosts.length} uncached Reddit posts to prefetch.`);
+
+      for (let i = 0; i < unCachedRedditPosts.length; i++) {
+        const deal = unCachedRedditPosts[i];
+        console.log(`[BackgroundSync] Prefetching comments for post ${deal.id} (${i + 1}/${unCachedRedditPosts.length})...`);
+        
+        await dealEnrichmentService.enrichAndCache(deal);
+
+        if (await isRedditRateLimited()) {
+          console.log('[BackgroundSync] Reddit became rate-limited during comments prefetch. Aborting.');
+          return;
+        }
+
+        // Delay after each comment fetch except the last one
+        if (i < unCachedRedditPosts.length - 1) {
+          console.log('[BackgroundSync] Staggering (waiting 2.5s)...');
+          await new Promise(resolve => setTimeout(resolve, 2500));
+        }
+      }
+
+      // Step 4 — Cache eviction (comment metadata only)
+      console.log('[BackgroundSync] Running cache eviction check...');
+      const allKeys = await AsyncStorage.getAllKeys();
+      const dealCacheKeys = allKeys.filter(k => k.startsWith('fgf_deal_cache_'));
+      const cachedRedditPostIds = dealCacheKeys
+        .map(k => k.replace('fgf_deal_cache_', ''))
+        .filter(id => !id.startsWith('gp_')); // strictly exclude GamerPower
+
+      // Protect claimed and tracked posts from cache eviction
+      const claimed = await getClaimedPosts();
+      const tracked = await getTrackedPosts();
+      const protectedIds = new Set([
+        ...claimed.map(p => p.id),
+        ...tracked.map(p => p.id)
+      ]);
+
+      const latestRedditIds = new Set(redditPosts.map(d => d.id));
+      let evictedCount = 0;
+
+      for (const cachedId of cachedRedditPostIds) {
+        if (!latestRedditIds.has(cachedId) && !protectedIds.has(cachedId)) {
+          console.log(`[BackgroundSync] Evicting dropped Reddit post ${cachedId} from cache.`);
+          await removeCachedDeal(cachedId);
+          evictedCount++;
+        }
+      }
+      console.log(`[BackgroundSync] Cache eviction complete. Evicted ${evictedCount} posts.`);
+      console.log('[BackgroundSync] Background sync queue completed successfully.');
+    } catch (error) {
+      console.warn('[BackgroundSync] Error in background sync queue:', error);
+    }
+  };
+
+  const loadPosts = async (type: 'hot' | 'new' = 'new', isRefreshing = false) => {
+    let hasCached = false;
+    if (!isRefreshing) {
+      try {
+        const cachedRaw = await AsyncStorage.getItem('fgf_merged_feed_cache');
+        if (cachedRaw) {
+          const cachedDeals = JSON.parse(cachedRaw);
+          if (Array.isArray(cachedDeals) && cachedDeals.length > 0) {
+            setPosts(cachedDeals);
+            setLoading(false);
+            hasCached = true;
+            console.log('[FeedScreen] Loaded merged feed from cache instantly.');
+          }
+        }
+      } catch (err) {
+        console.warn('[FeedScreen] Failed to load merged feed cache:', err);
+      }
+    }
+
+    if (isRefreshing) {
+      setRefreshing(true);
+      try {
+        await clearRedditRateLimit();
+      } catch (err) {
+        console.warn('[FeedScreen] Failed to clear rate limit on refresh:', err);
+      }
+    } else if (!hasCached) {
+      setLoading(true);
+    }
+    try {
+      // Fetch page 1 (after is undefined) - force network revalidation
+      const result = await fetchMergedGameFeed(type, 30, undefined, true);
+      setPosts(result.deals);
+      setAfter(result.after || null);
+      setHasMore(!!result.after);
+      setGpFailed(!!result.gpFailed);
+
+      // Cache the fresh deals
+      if (result.deals && result.deals.length > 0) {
+        await AsyncStorage.setItem('fgf_merged_feed_cache', JSON.stringify(result.deals));
+      }
+
+      // Mark all fetched deals as seen (used only to avoid re-logging in future)
+      const allFetchedIds = result.deals.map(p => p.id);
       await addSeenPosts(allFetchedIds);
 
-      // Start asynchronous enrichment in background
+      // Start enrichment (for local cache & Epic Games)
       dealEnrichmentService.reset();
-      dealEnrichmentService.enrichDeals(basicDeals, (updatedDeal) => {
-        setPosts((prevPosts) =>
-          prevPosts.map((p) => (p.id === updatedDeal.id ? updatedDeal : p))
-        );
+      dealEnrichmentService.enrichDeals(result.deals, (updatedDeal) => {
+        setPosts((prevPosts) => {
+          const updated = prevPosts.map((p) => {
+            if (p.id !== updatedDeal.id) return p;
+            return {
+              ...p,
+              ...updatedDeal,
+              // Prefer live in-state values for mutable counters — the
+              // enrichment payload comes from DealCache (24h TTL) which
+              // may have stale numbers.
+              claimedUsers: p.claimedUsers ?? updatedDeal.claimedUsers,
+              worth:        p.worth        ?? updatedDeal.worth,
+              endDate:      p.endDate      !== undefined ? p.endDate      : updatedDeal.endDate,
+              isExpired:    p.isExpired    !== undefined ? p.isExpired    : updatedDeal.isExpired,
+            };
+          });
+          AsyncStorage.setItem('fgf_merged_feed_cache', JSON.stringify(updated)).catch(() => {});
+          return updated;
+        });
       });
+
+      // If Reddit was fetched live, trigger the staggered background sync queue
+      if (result.redditFetchedLive) {
+        startBackgroundSyncQueue(result.deals, isRefreshing).catch(err => {
+          console.error('[FeedScreen] Background sync queue failed:', err);
+        });
+      }
     } catch (e) {
       console.error(e);
       if (onConnectionError) {
@@ -138,97 +423,343 @@ export default function FeedScreen({ onDealSelect, claimedPostIds = [], onNewAle
     }
   };
 
+  const loadMorePosts = async () => {
+    if (loading || loadingMore || !hasMore || !after) {
+      return;
+    }
+
+    setLoadingMore(true);
+    try {
+      console.log(`[FeedScreen] Loading more posts with cursor: ${after}`);
+      const result = await fetchMergedGameFeed('new', 30, after);
+      
+      setPosts((prev) => {
+        return mergeAndDeduplicateDeals(prev, result.deals);
+      });
+      
+      setAfter(result.after || null);
+      setHasMore(!!result.after);
+
+      // Mark all new fetched posts as seen
+      const allFetchedIds = result.deals.map(p => p.id);
+      await addSeenPosts(allFetchedIds);
+
+      // Enrich new deals in background
+      dealEnrichmentService.enrichDeals(result.deals, (updatedDeal) => {
+        setPosts((prevPosts) => {
+          const updated = prevPosts.map((p) => (p.id === updatedDeal.id ? updatedDeal : p));
+          AsyncStorage.setItem('fgf_merged_feed_cache', JSON.stringify(updated)).catch(() => {});
+          return updated;
+        });
+      });
+    } catch (error) {
+      console.warn('[FeedScreen] Load more error:', error);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   useEffect(() => {
     loadPosts();
+    const unsubscribe = dealEnrichmentService.subscribe((updatedDeal) => {
+      setPosts((prevPosts) => {
+        const updated = prevPosts.map((p) => {
+          if (p.id !== updatedDeal.id) return p;
+          return {
+            ...p,
+            ...updatedDeal,
+            claimedUsers: p.claimedUsers ?? updatedDeal.claimedUsers,
+            worth:        p.worth        ?? updatedDeal.worth,
+            endDate:      p.endDate      !== undefined ? p.endDate      : updatedDeal.endDate,
+            isExpired:    p.isExpired    !== undefined ? p.isExpired    : updatedDeal.isExpired,
+          };
+        });
+        AsyncStorage.setItem('fgf_merged_feed_cache', JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Dynamic countdown updater (refreshes remaining time every minute)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPosts((prevPosts) =>
+        prevPosts.map((deal) => {
+          const expired = isDealExpired(deal);
+          return {
+            ...deal,
+            isExpired: expired,
+            timeLeft: getTimeLeft(deal.expiresAt || deal.endDate),
+            expiryStatus: expired ? 'EXPIRED' : deal.expiryStatus,
+          };
+        })
+      );
+    }, 60000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const handleRefresh = () => {
+    setAfter(null);
+    setHasMore(true);
+    setGpFailed(false);
     loadPosts('new', true);
   };
 
-
-  // Helper to map Deal type back to display label
-  const getDisplayType = (type: Deal['type']) => {
-    switch (type) {
-      case 'full_game': return 'GAME';
-      case 'dlc': return 'DLC';
-      case 'beta': return 'BETA';
-      case 'item': return 'ITEM';
-      default: return 'GAME';
+  // Platform selection handler (supports multi-select)
+  const handlePlatformSelect = (plat: string) => {
+    if (plat === 'All') {
+      setSelectedPlatforms(['All']);
+    } else {
+      let current = [...selectedPlatforms].filter(p => p !== 'All');
+      if (current.includes(plat)) {
+        current = current.filter(p => p !== plat);
+      } else {
+        current.push(plat);
+      }
+      if (current.length === 0) {
+        setSelectedPlatforms(['All']);
+      } else {
+        setSelectedPlatforms(current);
+      }
     }
   };
 
-  // Filter Logic
-  const filteredPosts = posts.filter((post) => {
-    // If a game has no platform, don't show it
-    if (!post.platform || post.platform.trim() === '' || post.platform.toLowerCase() === 'unknown') {
-      return false;
+  // Category selection handler (supports multi-select)
+  const handleCategorySelect = (cat: string) => {
+    if (cat === 'All') {
+      setSelectedCategories(['All']);
+    } else {
+      let current = [...selectedCategories].filter(c => c !== 'All');
+      if (current.includes(cat)) {
+        current = current.filter(c => c !== cat);
+      } else {
+        current.push(cat);
+      }
+      if (current.length === 0) {
+        setSelectedCategories(['All']);
+      } else {
+        setSelectedCategories(current);
+      }
     }
-
-    const matchesSearch =
-      post.title.toLowerCase().includes(search.toLowerCase()) ||
-      post.platform.toLowerCase().includes(search.toLowerCase());
-
-    let matchesPlatform = true;
-    if (selectedPlatform !== 'All') {
-      matchesPlatform = post.platform.toLowerCase().includes(selectedPlatform.toLowerCase());
-    }
-
-    return matchesSearch && matchesPlatform;
-  });
-
-  const getGameCover = (id: string) => {
-    let sum = 0;
-    for (let i = 0; i < id.length; i++) {
-      sum += id.charCodeAt(i);
-    }
-    return COVER_IMAGES[sum % COVER_IMAGES.length];
   };
 
-  // Sort posts by creation date descending (newest first)
-  const sortedPosts = [...filteredPosts].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  // Helper to calculate active filters count
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (!selectedCategories.includes('All')) count += selectedCategories.length;
+    if (!selectedPlatforms.includes('All')) count += selectedPlatforms.length;
+    if (selectedClaimMethod !== 'All') count++;
+    if (showExpired) count++;
+    if (selectedClaimStatus !== 'All') count++;
+    return count;
+  }, [selectedCategories, selectedPlatforms, selectedClaimMethod, showExpired, selectedClaimStatus]);
 
-  // Extract first 3 non-expired posts as Latest Loot
-  const featuredPosts = sortedPosts.filter((post) => post.expiryStatus !== 'EXPIRED').slice(0, 3);
-  const featuredIds = new Set(featuredPosts.map((post) => post.id));
-  const remainingPosts = sortedPosts.filter((post) => !featuredIds.has(post.id));
+  // Sort helper function
+  const sortDeals = (deals: Deal[], field: string, direction: 'asc' | 'desc'): Deal[] => {
+    const sorted = [...deals];
+    
+    const parsePrice = (p?: string) => {
+      if (!p) return null;
+      const clean = p.replace(/[^0-9.]/g, '');
+      const num = parseFloat(clean);
+      return isNaN(num) ? null : num;
+    };
+    
+    const parseDate = (d?: string | null) => {
+      if (!d) return null;
+      const t = Date.parse(d);
+      return isNaN(t) ? null : t;
+    };
 
-  // Render Horizontal Featured Carousel
+    sorted.sort((a, b) => {
+      // Custom price sort with Reddit games (no worth) sent to the end
+      if (field === 'price') {
+        const valA = parsePrice(a.worth || a.originalPrice);
+        const valB = parsePrice(b.worth || b.originalPrice);
+        const hasA = valA !== null;
+        const hasB = valB !== null;
+
+        if (!hasA && !hasB) return 0;
+        if (!hasA) return 1;  // Put a (no worth) at the end
+        if (!hasB) return -1; // Put b (no worth) at the end
+
+        return direction === 'desc' ? valB! - valA! : valA! - valB!;
+      }
+
+      // Custom expiry sort with no expiry date sent to the end
+      if (field === 'end_date') {
+        const valA = parseDate(a.expiresAt || a.endDate);
+        const valB = parseDate(b.expiresAt || b.endDate);
+        const hasA = valA !== null;
+        const hasB = valB !== null;
+
+        if (!hasA && !hasB) return 0;
+        if (!hasA) return 1;  // Put a (no expiry) at the end
+        if (!hasB) return -1; // Put b (no expiry) at the end
+
+        return direction === 'desc' ? valB! - valA! : valA! - valB!;
+      }
+
+      let valA = 0;
+      let valB = 0;
+
+      switch (field) {
+        case 'claims':
+          valA = a.claimedUsers || 0;
+          valB = b.claimedUsers || 0;
+          break;
+        case 'release':
+          valA = parseDate(a.releaseDate) || 0;
+          valB = parseDate(b.releaseDate) || 0;
+          break;
+        case 'start_date':
+        default:
+          valA = a.createdAt || 0;
+          valB = b.createdAt || 0;
+          break;
+      }
+
+      if (valA !== valB) {
+        return direction === 'desc' ? valB - valA : valA - valB;
+      }
+
+      // Priority sort fallback: GamerPower first
+      if (a.source === 'gamerpower' && b.source !== 'gamerpower') return -1;
+      if (b.source === 'gamerpower' && a.source !== 'gamerpower') return 1;
+      return 0;
+    });
+
+    return sorted;
+  };
+
+  const getSortLabel = (field: string) => {
+    switch (field) {
+      case 'claims': return 'Claims';
+      case 'price': return 'Value';
+      case 'release': return 'Released';
+      case 'end_date': return 'Expiry';
+      case 'start_date':
+      default:
+        return 'Newest';
+    }
+  };
+
+  // Efficient memoized filtered and sorted posts calculation
+  const filteredAndSortedPosts = useMemo(() => {
+    const baseFiltered = filterDeals(posts, {
+      category: 'All', // Handle categories manually below for multi-select
+      platform: 'All', // Handle platforms filter manually below for multi-select
+      claimMethod: selectedClaimMethod,
+      showExpired,
+      search,
+    });
+
+    const matchesCats = selectedCategories.includes('All')
+      ? baseFiltered
+      : baseFiltered.filter((deal) => {
+          return selectedCategories.some((selCat) => {
+            if (selCat === 'Game') return deal.type === 'full_game';
+            if (selCat === 'DLC') return deal.type === 'dlc' || deal.type === 'item' || deal.type === 'loot';
+            if (selCat === 'Beta') return deal.type === 'beta';
+            if (selCat === 'Mobile Game') return deal.type === 'mobile_game';
+            return false;
+          });
+        });
+
+    const matchesPlats = selectedPlatforms.includes('All')
+      ? matchesCats
+      : matchesCats.filter((deal) => {
+          const dealPlats = [
+            deal.platform.toLowerCase()
+          ];
+
+          return selectedPlatforms.some((selPlat) => {
+            const filterPlat = selPlat.toLowerCase();
+            if (filterPlat === 'mobile') {
+              return dealPlats.some((p) =>
+                ['mobile', 'android', 'ios', 'google play', 'app store'].some((kw) => p.includes(kw))
+              );
+            }
+            if (filterPlat === 'itch.io') {
+              return dealPlats.some((p) => p.includes('itch') && !p.includes('switch'));
+            }
+            return dealPlats.some((p) => p.includes(filterPlat));
+          });
+        });
+
+    // Claimed Filter (3-way)
+    const matchesClaimed = matchesPlats.filter((deal) => {
+      const isClaimed = isDealClaimed(deal, claimedDeals || []);
+      if (selectedClaimStatus === 'Claimed') return isClaimed;
+      if (selectedClaimStatus === 'Unclaimed') return !isClaimed;
+      return true;
+    });
+
+    // ALWAYS deduplicate AFTER filtering, BEFORE sorting
+    const deduplicatedMatches = mergeAndDeduplicateDeals([], matchesClaimed);
+    // Extra safety: run it again if needed
+    const finalDeduplicated = mergeAndDeduplicateDeals([], deduplicatedMatches);
+
+    return sortDeals(finalDeduplicated, sortByField, sortDirection);
+  }, [posts, selectedCategories, selectedPlatforms, selectedClaimMethod, showExpired, search, sortByField, sortDirection, selectedClaimStatus, claimedDeals]);
+
+  const featuredPosts = useMemo(() => {
+    return filteredAndSortedPosts.filter((post) => !post.isExpired && post.expiryStatus !== 'EXPIRED').slice(0, 3);
+  }, [filteredAndSortedPosts]);
+
+  const featuredIds = useMemo(() => {
+    return new Set(featuredPosts.map((post) => post.id));
+  }, [featuredPosts]);
+
+  const remainingPosts = useMemo(() => {
+    return filteredAndSortedPosts.filter((post) => !featuredIds.has(post.id));
+  }, [filteredAndSortedPosts, featuredIds]);
+
   const renderFeaturedSection = () => {
     if (featuredPosts.length === 0) return null;
+    const activeCount = posts.filter(p => !p.isExpired && p.expiryStatus !== 'EXPIRED').length;
     return (
       <View style={styles.featuredSection}>
         <View style={styles.sectionHeaderRow}>
-          <View style={styles.sectionTitleWithIcon}>
-            <Text style={styles.sectionTitle}>LATEST LOOT</Text>
+          <Text style={styles.sectionTitle}>Featured Loot</Text>
+          <View style={styles.liveStatBadge}>
+            <View style={styles.liveDot} />
+            <Text style={styles.liveStatText}>
+              <Text style={styles.liveStatCount}>{activeCount}</Text>
+              {' active giveaways'}
+            </Text>
           </View>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.featuredCarousel}>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false} 
+          contentContainerStyle={styles.featuredCarousel}
+          snapToInterval={316} // 300 (card width) + 16 (gap)
+          decelerationRate="fast"
+          snapToAlignment="start"
+          nestedScrollEnabled={true}
+        >
           {featuredPosts.map((post) => {
-            const isClaimed = claimedPostIds.includes(post.id);
-            const isExpired = post.expiryStatus === 'EXPIRED';
+            const isClaimed = isDealClaimed(post, claimedDeals || []);
+            const isExpired = post.isExpired || post.expiryStatus === 'EXPIRED';
+            const timeLeft = post.timeLeft || '12:00:00';
             return (
               <Pressable 
                 key={'feat_' + post.id} 
                 onPress={() => onDealSelect(post)}
-                style={[
-                  styles.featuredCard,
-                  isExpired && styles.expiredFeaturedCard
-                ]}
+                style={styles.featuredCard}
               >
-                {/* Cover Image */}
                 <Image 
                   source={{ uri: (!imageErrors[post.id] && post.image && post.image !== 'placeholder') ? post.image : getGameCover(post.id) }} 
                   style={styles.featuredImage} 
                   blurRadius={post.isNsfw ? 15 : 0}
                   onError={() => handleImageError(post.id)}
                 />
-                
-                {/* Overlay Gradient Background */}
                 <View style={styles.featuredImageOverlay} />
 
-                {/* NSFW Overlay */}
                 {post.isNsfw && (
                   <View style={styles.nsfwFeaturedOverlay}>
                     <View style={styles.nsfwBadge}>
@@ -237,33 +768,31 @@ export default function FeedScreen({ onDealSelect, claimedPostIds = [], onNewAle
                   </View>
                 )}
 
-                {/* Top Badges */}
-                <View style={styles.featuredTopBadges}>
-                  <View style={styles.featuredFreeKeepBadge}>
-                    <Text style={styles.featuredFreeKeepText}>FREE TO KEEP</Text>
-                  </View>
-                  <View style={styles.featuredPlatformBadge}>
-                    <Text style={styles.featuredPlatformBadgeText}>{post.platform.toUpperCase()}</Text>
-                  </View>
-                  {post.claimMethod === 'tasks' && (
-                    <View style={styles.featuredTasksBadge}>
-                      <Text style={styles.featuredTasksText}>TASKS</Text>
-                    </View>
-                  )}
+                {/* Timer Pill */}
+                <View style={styles.featuredTimerPill}>
+                  <Text style={styles.featuredTimerIconText}>🕒</Text>
+                  <Text style={styles.featuredTimerText}>{timeLeft}</Text>
                 </View>
 
-                {/* Bottom Details Row */}
-                <View style={styles.featuredBottomRow}>
-                  <Text numberOfLines={2} style={styles.featuredTitleText}>
+                {/* Content Overlay */}
+                <View style={styles.featuredContent}>
+                  <View style={styles.featuredBadgesRow}>
+                    <View style={styles.featuredPlatformBadge}>
+                      {getPlatformIcon(post.platform)}
+                      <Text style={styles.featuredPlatformBadgeText}>{post.platform.toUpperCase()}</Text>
+                    </View>
+                    <View style={styles.featuredLiveBadge}>
+                      <Text style={styles.featuredLiveBadgeText}>LIVE</Text>
+                    </View>
+                  </View>
+
+                  <Text numberOfLines={1} style={styles.featuredTitleText}>
                     {post.title}
                   </Text>
-                  <View style={[
-                    styles.claimNowBtn,
-                    isExpired && { backgroundColor: '#ef4444' },
-                    isClaimed && { backgroundColor: COLORS.secondary }
-                  ]}>
-                    <Text style={styles.claimNowBtnText}>
-                      {isExpired ? 'EXPIRED' : (isClaimed ? 'CLAIMED' : 'CLAIM NOW')}
+
+                  <View style={styles.featuredClaimButton}>
+                    <Text style={styles.featuredClaimButtonText}>
+                      {isExpired ? 'EXPIRED' : (isClaimed ? 'CLAIMED' : 'Claim Key')}
                     </Text>
                   </View>
                 </View>
@@ -275,66 +804,407 @@ export default function FeedScreen({ onDealSelect, claimedPostIds = [], onNewAle
     );
   };
 
+  const renderFooter = () => {
+    if (loadingMore) {
+      return (
+        <View style={styles.footerLoader}>
+          <ActivityIndicator size="small" color={COLORS.primary} />
+          <Text style={styles.footerLoaderText}>LOADIN' MORE LOOT...</Text>
+        </View>
+      );
+    }
+    if (!hasMore && remainingPosts.length > 0) {
+      return (
+        <View style={styles.footerEnd}>
+          <Text style={styles.footerEndText}>- NO MORE LOOT DETECTED -</Text>
+        </View>
+      );
+    }
+    return null;
+  };
+
+  const renderItem = useCallback(({ item }: { item: Deal }) => {
+    const isClaimed = isDealClaimed(item, claimedDeals || []);
+    return (
+      <DealCard
+        item={item}
+        isClaimed={isClaimed}
+        onPress={onDealSelect}
+        getGameCover={getGameCover}
+        hasImageError={!!imageErrors[item.id]}
+        handleImageError={handleImageError}
+      />
+    );
+  }, [claimedDeals, onDealSelect, getGameCover, imageErrors, handleImageError]);
+
   return (
     <View style={styles.container}>
+      {/* GamerPower Warning Banner */}
+      {gpFailed && (
+        <View style={styles.warningBanner}>
+          <Text style={styles.warningBannerText}>
+            ⚠️ GamerPower offline. Showing Reddit backup listings.
+          </Text>
+        </View>
+      )}
+
       {/* Search Bar Block */}
       <View style={styles.searchSection}>
         <View style={styles.searchContainer}>
-          <Search size={18} color={COLORS.text} style={styles.searchIcon} />
+          <Search size={18} color="#858585" style={styles.searchIcon} />
           <TextInput
-            placeholder="Search loot drops..."
-            placeholderTextColor="#64748b"
+            placeholder="Find loot, games, DLC..."
+            placeholderTextColor="#858585"
             style={styles.searchInput}
             value={search}
             onChangeText={setSearch}
           />
         </View>
 
-        {/* Refresh Button */}
-        <BouncyPressable
+        <Pressable
           onPress={handleRefresh}
-          backgroundColor={COLORS.primary}
-          borderRadius={24}
-          shadowOffsetSize={0}
-          style={styles.refreshBtn}
-          contentStyle={styles.refreshBtnContent}
+          style={styles.refreshBtnStitch}
         >
-          <RotateCcw size={18} color={COLORS.bg} />
-        </BouncyPressable>
+          <RotateCcw size={18} color={COLORS.primary} />
+        </Pressable>
       </View>
 
-      {/* Horizontal Filter Area */}
-      <View style={styles.filtersSection}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollView}>
-          <View style={styles.filterGroup}>
-            {PLATFORMS_FILTER.map((plat) => {
-              const isSelected = selectedPlatform === plat;
-              return (
-                <BouncyPressable
-                  key={plat}
-                  onPress={() => setSelectedPlatform(plat)}
-                  backgroundColor={isSelected ? COLORS.primary : COLORS.white}
-                  borderRadius={12}
-                  shadowOffsetSize={0}
-                  contentStyle={styles.filterPillContent}
-                >
-                  <Text style={[styles.filterPillText, isSelected && styles.filterPillTextSelected]}>
-                    {plat.toUpperCase()}
-                  </Text>
-                </BouncyPressable>
-              );
-            })}
-          </View>
+      {/* Controls row (Filters & Sort horizontal scroll) */}
+      <View style={styles.quickFiltersWrapper}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickFiltersContainer}>
+          <Pressable
+            onPress={() => setIsFilterModalVisible(true)}
+            style={styles.filterActionButton}
+          >
+            <SlidersHorizontal size={16} color={COLORS.secondary} />
+            <Text style={styles.filterActionButtonText}>Filter</Text>
+            {activeFiltersCount > 0 && (
+              <View style={styles.badgeSmall}>
+                <Text style={styles.badgeSmallText}>{activeFiltersCount}</Text>
+              </View>
+            )}
+          </Pressable>
+
+          <Pressable
+            onPress={() => setIsSortModalVisible(true)}
+            style={styles.sortActionButton}
+          >
+            <ArrowUpDown size={16} color={COLORS.textMuted} />
+            <Text style={styles.sortActionButtonText}>Sort</Text>
+          </Pressable>
+
+          {/* Quick PC filter */}
+          <Pressable
+            onPress={() => {
+              if (selectedPlatforms.includes('Steam')) {
+                setSelectedPlatforms(['All']);
+              } else {
+                setSelectedPlatforms(['Steam']);
+              }
+            }}
+            style={[
+              styles.quickFilterChip,
+              selectedPlatforms.includes('Steam') && styles.quickFilterChipActive
+            ]}
+          >
+            <Text style={[
+              styles.quickFilterChipText,
+              selectedPlatforms.includes('Steam') && styles.quickFilterChipTextActive
+            ]}>PC</Text>
+          </Pressable>
+
+          {/* Quick Console filter */}
+          <Pressable
+            onPress={() => {
+              if (selectedPlatforms.includes('Playstation') || selectedPlatforms.includes('Xbox')) {
+                setSelectedPlatforms(['All']);
+              } else {
+                setSelectedPlatforms(['Playstation', 'Xbox']);
+              }
+            }}
+            style={[
+              styles.quickFilterChip,
+              (selectedPlatforms.includes('Playstation') || selectedPlatforms.includes('Xbox')) && styles.quickFilterChipActive
+            ]}
+          >
+            <Text style={[
+              styles.quickFilterChipText,
+              (selectedPlatforms.includes('Playstation') || selectedPlatforms.includes('Xbox')) && styles.quickFilterChipTextActive
+            ]}>Console</Text>
+          </Pressable>
         </ScrollView>
       </View>
 
-      {/* Main List */}
+      {/* Filters Modal Dialog */}
+      <Modal
+        visible={isFilterModalVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setIsFilterModalVisible(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setIsFilterModalVisible(false)}>
+          <View style={styles.modalWrapper} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalContentCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>FILTER DROPS</Text>
+                <Pressable onPress={() => setIsFilterModalVisible(false)}>
+                  <X size={22} color={COLORS.text} />
+                </Pressable>
+              </View>
+
+              <ScrollView
+                contentContainerStyle={styles.modalScrollBody}
+                style={styles.modalScrollView}
+                showsVerticalScrollIndicator={false}
+              >
+                {/* Categories */}
+                <View style={styles.filterCard}>
+                  <View style={styles.filterCardHeader}>
+                    <Text style={styles.filterCardTitle}>CATEGORY TYPE</Text>
+                    <Text style={styles.filterCardHint}>multi-select</Text>
+                  </View>
+                  {CATEGORIES_FILTER.map((cat, idx) => {
+                    const isSelected = selectedCategories.includes(cat);
+                    const isLast = idx === CATEGORIES_FILTER.length - 1;
+                    return (
+                      <Pressable
+                        key={cat}
+                        onPress={() => handleCategorySelect(cat)}
+                        style={[styles.filterRow, !isLast && styles.filterRowBorder]}
+                      >
+                        <View style={[styles.filterCheckbox, isSelected && styles.filterCheckboxActive]}>
+                          {isSelected && <Check size={10} color={COLORS.bg} />}
+                        </View>
+                        <Text style={[styles.filterRowLabel, isSelected && styles.filterRowLabelActive]}>{cat}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {/* Platforms */}
+                <View style={styles.filterCard}>
+                  <View style={styles.filterCardHeader}>
+                    <Text style={styles.filterCardTitle}>PLATFORMS</Text>
+                    <Text style={styles.filterCardHint}>multi-select</Text>
+                  </View>
+                  {PLATFORMS_FILTER.map((plat, idx) => {
+                    const isSelected = selectedPlatforms.includes(plat);
+                    const isLast = idx === PLATFORMS_FILTER.length - 1;
+                    return (
+                      <Pressable
+                        key={plat}
+                        onPress={() => handlePlatformSelect(plat)}
+                        style={[styles.filterRow, !isLast && styles.filterRowBorder]}
+                      >
+                        <View style={[styles.filterCheckbox, isSelected && styles.filterCheckboxActive]}>
+                          {isSelected && <Check size={10} color={COLORS.bg} />}
+                        </View>
+                        {plat !== 'All' && (
+                          <View style={[styles.filterPlatformIconBg, { backgroundColor: getPlatformColor(plat) }]}>
+                            <StoreIcon platform={plat} size={11} color="#fff" />
+                          </View>
+                        )}
+                        <Text style={[styles.filterRowLabel, isSelected && styles.filterRowLabelActive]}>{plat}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {/* Claim Difficulty */}
+                <View style={styles.filterCard}>
+                  <View style={styles.filterCardHeader}>
+                    <Text style={styles.filterCardTitle}>CLAIM DIFFICULTY</Text>
+                    <Text style={styles.filterCardHint}>single</Text>
+                  </View>
+                  {CLAIM_METHODS_FILTER.map((method, idx) => {
+                    const isSelected = selectedClaimMethod === method;
+                    const isLast = idx === CLAIM_METHODS_FILTER.length - 1;
+                    return (
+                      <Pressable
+                        key={method}
+                        onPress={() => setSelectedClaimMethod(method)}
+                        style={[styles.filterRow, !isLast && styles.filterRowBorder]}
+                      >
+                        <View style={[styles.filterRadioOuter, isSelected && styles.filterRadioOuterActive]}>
+                          {isSelected && <View style={styles.filterRadioInner} />}
+                        </View>
+                        <Text style={[styles.filterRowLabel, isSelected && styles.filterRowLabelActive]}>{method}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {/* Claim Status */}
+                <View style={styles.filterCard}>
+                  <View style={styles.filterCardHeader}>
+                    <Text style={styles.filterCardTitle}>CLAIM STATUS</Text>
+                    <Text style={styles.filterCardHint}>single</Text>
+                  </View>
+                  {(['All', 'Claimed', 'Unclaimed'] as const).map((status, idx) => {
+                    const isSelected = selectedClaimStatus === status;
+                    const isLast = idx === 2;
+                    return (
+                      <Pressable
+                        key={status}
+                        onPress={() => setSelectedClaimStatus(status)}
+                        style={[styles.filterRow, !isLast && styles.filterRowBorder]}
+                      >
+                        <View style={[styles.filterRadioOuter, isSelected && styles.filterRadioOuterActive]}>
+                          {isSelected && <View style={styles.filterRadioInner} />}
+                        </View>
+                        <Text style={[styles.filterRowLabel, isSelected && styles.filterRowLabelActive]}>{status}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {/* Expired toggle */}
+                <View style={styles.filterCard}>
+                  <Pressable
+                    style={styles.filterRow}
+                    onPress={() => setShowExpired(prev => !prev)}
+                  >
+                    <View style={[styles.filterCheckbox, showExpired && { backgroundColor: '#ef4444', borderColor: '#ef4444' }]}>
+                      {showExpired && <Check size={10} color={COLORS.bg} />}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.filterRowLabel, showExpired && styles.filterRowLabelActive]}>Show Expired Loot</Text>
+                      <Text style={styles.filterRowSub}>Include deals that have already ended</Text>
+                    </View>
+                  </Pressable>
+                </View>
+              </ScrollView>
+
+              <View style={styles.modalActionsRow}>
+                <BouncyPressable
+                  onPress={() => {
+                    setSelectedCategories(['All']);
+                    setSelectedPlatforms(['All']);
+                    setSelectedClaimMethod('All');
+                    setShowExpired(false);
+                    setSelectedClaimStatus('All');
+                  }}
+                  backgroundColor={COLORS.bg}
+                  borderRadius={20}
+                  borderWidth={1}
+                  borderColor="#334155"
+                  shadowOffsetSize={0}
+                  style={styles.modalActionBtnHalf}
+                  contentStyle={[styles.modalActionBtnContent, { borderWidth: 1, borderColor: '#334155' }]}
+                >
+                  <Text style={[styles.modalActionBtnText, { color: '#ffffff' }]}>RESET ALL</Text>
+                </BouncyPressable>
+
+                <BouncyPressable
+                  onPress={() => setIsFilterModalVisible(false)}
+                  backgroundColor={COLORS.primary}
+                  borderRadius={20}
+                  borderWidth={1}
+                  borderColor="#334155"
+                  shadowOffsetSize={0}
+                  style={styles.modalActionBtnHalf}
+                  contentStyle={styles.modalActionBtnContent}
+                >
+                  <Text style={styles.modalActionBtnText}>APPLY</Text>
+                </BouncyPressable>
+              </View>
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Sort Modal Dialog */}
+      <Modal
+        visible={isSortModalVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setIsSortModalVisible(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setIsSortModalVisible(false)}>
+          <View style={styles.modalWrapper} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalContentCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>SORT DROPS</Text>
+                <Pressable onPress={() => setIsSortModalVisible(false)}>
+                  <X size={22} color={COLORS.text} />
+                </Pressable>
+              </View>
+
+              <ScrollView contentContainerStyle={styles.modalScrollBody}>
+                {/* Sort Fields */}
+                <Text style={styles.modalSectionLabel}>SORT FIELD</Text>
+                <View style={styles.sortOptionsList}>
+                  {[
+                    { id: 'start_date', label: 'Giveaway Start Date' },
+                    { id: 'claims', label: 'Claim Count' },
+                    { id: 'price', label: 'Original Price / Value' },
+                    { id: 'release', label: 'Release Date' },
+                    { id: 'end_date', label: 'End Date / Expiry' },
+                  ].map((field) => {
+                    const isSelected = sortByField === field.id;
+                    return (
+                      <Pressable
+                        key={field.id}
+                        onPress={() => setSortByField(field.id as any)}
+                        style={[styles.sortOptionItem, isSelected && styles.sortOptionItemSelected]}
+                      >
+                        <Text style={[styles.sortOptionText, isSelected && styles.sortOptionTextSelected]}>
+                          {field.label}
+                        </Text>
+                        {isSelected && <Check size={18} color={COLORS.primary} />}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {/* Sort Order direction */}
+                <Text style={styles.modalSectionLabel}>SORT ORDER</Text>
+                <View style={styles.chipsGrid}>
+                  {[
+                    { id: 'desc', label: 'Higher to Lower' },
+                    { id: 'asc', label: 'Lower to Higher' },
+                  ].map((dir) => {
+                    const isSelected = sortDirection === dir.id;
+                    return (
+                      <Pressable
+                        key={dir.id}
+                        onPress={() => setSortDirection(dir.id as any)}
+                        style={[styles.chipItem, isSelected && styles.chipItemSelected]}
+                      >
+                        <Text style={[styles.chipItemText, isSelected && styles.chipItemTextSelected]}>
+                          {dir.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+
+              <View style={styles.modalActionsRow}>
+                <BouncyPressable
+                  onPress={() => setIsSortModalVisible(false)}
+                  backgroundColor={COLORS.primary}
+                  borderRadius={20}
+                  borderWidth={1}
+                  borderColor="#334155"
+                  shadowOffsetSize={0}
+                  style={styles.modalActionBtnFull}
+                  contentStyle={styles.modalActionBtnContent}
+                >
+                  <Text style={styles.modalActionBtnText}>APPLY SORT</Text>
+                </BouncyPressable>
+              </View>
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Fresh Listings */}
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.loadingText}>Fetching games from Reddit...</Text>
+          <HourglassLoader />
         </View>
-      ) : filteredPosts.length === 0 ? (
+      ) : filteredAndSortedPosts.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.noResultsTitle}>No Freebies Found!</Text>
           <Text style={styles.noResultsSub}>Try changing your filters or searching something else.</Text>
@@ -346,106 +1216,25 @@ export default function FeedScreen({ onDealSelect, claimedPostIds = [], onNewAle
           ListHeaderComponent={() => (
             <View>
               {renderFeaturedSection()}
-              {/* Fresh Findings Header */}
               {remainingPosts.length > 0 && (
                 <View style={styles.freshFindingsHeader}>
-                  <View>
-                    <Text style={styles.incomingLabel}>INCOMING DATA...</Text>
-                    <Text style={styles.freshFindingsTitle}>Fresh Findings</Text>
-                  </View>
-                  <View style={styles.liveIndicator}>
-                    <View style={styles.liveDot} />
-                    <Text style={styles.liveText}>LIVE</Text>
-                  </View>
+                  <Text style={styles.freshFindingsTitle}>Active Quests</Text>
+                  <Pressable>
+                    <Text style={styles.viewAllText}>View All</Text>
+                  </Pressable>
                 </View>
               )}
             </View>
           )}
-          renderItem={({ item }) => {
-            const isClaimed = claimedPostIds.includes(item.id);
-            const isExpired = item.expiryStatus === 'EXPIRED';
-            return (
-              <View style={[styles.freshItemCard, isExpired && styles.expiredItemCard]}>
-                {/* Cover Thumbnail */}
-                <View style={[styles.thumbWrapper, { borderColor: getPlatformColor(item.platform) }]}>
-                  <Image 
-                    source={{ uri: (!imageErrors[item.id] && item.image && item.image !== 'placeholder') ? item.image : getGameCover(item.id) }} 
-                    style={styles.thumbImage} 
-                    blurRadius={item.isNsfw ? 15 : 0}
-                    onError={() => handleImageError(item.id)}
-                  />
-                  {item.isNsfw && (
-                    <View style={styles.nsfwThumbOverlay}>
-                      <Text style={styles.nsfwThumbText}>NSFW</Text>
-                    </View>
-                  )}
-                </View>
-
-                {/* Details */}
-                <View style={styles.freshItemDetailsContainer}>
-                  {/* Badge Row */}
-                  <View style={[styles.typeBadgeRow, { flexDirection: 'row', gap: 6 }]}>
-                    <View style={[
-                      styles.typeBadge,
-                      item.type === 'full_game' && styles.typeBadgeGame,
-                      item.type === 'item' && styles.typeBadgeItem,
-                      item.type === 'dlc' && styles.typeBadgeDlc,
-                    ]}>
-                      <Text style={[
-                        styles.typeBadgeText,
-                        item.type === 'full_game' && styles.typeBadgeTextGame,
-                        item.type === 'item' && styles.typeBadgeTextItem,
-                        item.type === 'dlc' && styles.typeBadgeTextDlc,
-                      ]}>
-                        {getDisplayType(item.type)}
-                      </Text>
-                    </View>
-                    {item.claimMethod === 'tasks' && (
-                      <View style={styles.tasksInlineBadge}>
-                        <Text style={styles.tasksInlineBadgeText}>TASKS REQUIRED</Text>
-                      </View>
-                    )}
-                    {item.isNsfw && (
-                      <View style={styles.nsfwInlineBadge}>
-                        <Text style={styles.nsfwInlineBadgeText}>NSFW</Text>
-                      </View>
-                    )}
-                  </View>
-
-                  {/* Title */}
-                  <Text numberOfLines={1} style={styles.freshItemTitle}>
-                    {item.title}
-                  </Text>
-
-                  {/* Platform */}
-                  <Text numberOfLines={1} style={styles.freshItemPlatform}>
-                    {item.platform}
-                  </Text>
-                </View>
-
-                {/* Snipe Button */}
-                <BouncyPressable
-                  onPress={() => onDealSelect(item)}
-                  backgroundColor="transparent"
-                  borderRadius={8}
-                  shadowOffsetSize={0}
-                  style={styles.snipeButtonWrapper}
-                  contentStyle={[
-                    styles.snipeBtn,
-                    { borderColor: isExpired ? '#ff8888' : '#39ff14', borderWidth: 1 }
-                  ]}
-                >
-                  <Text style={[
-                    styles.snipeBtnText,
-                    { color: isExpired ? '#ff8888' : '#39ff14' }
-                  ]}>
-                    {isExpired ? 'EXPIRED' : (isClaimed ? 'CLAIMED' : 'SNIPE')}
-                  </Text>
-                </BouncyPressable>
-              </View>
-            );
-          }}
+          renderItem={renderItem}
           contentContainerStyle={styles.listContent}
+          onEndReached={loadMorePosts}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={renderFooter}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          initialNumToRender={8}
+          removeClippedSubviews={Platform.OS === 'android'}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -465,10 +1254,23 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.bg,
   },
+  warningBanner: {
+    backgroundColor: '#ffd600',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  warningBannerText: {
+    fontFamily: FONTS.bold,
+    fontSize: 12,
+    color: '#0b101e',
+    textAlign: 'center',
+  },
   searchSection: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingHorizontal: 20,
+    paddingTop: 16,
     paddingBottom: 8,
     gap: 12,
     alignItems: 'center',
@@ -477,15 +1279,15 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.white,
+    backgroundColor: '#1A1A1A',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.05)',
     borderRadius: 16,
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     height: 48,
   },
   searchIcon: {
-    marginRight: 8,
+    marginRight: 10,
   },
   searchInput: {
     flex: 1,
@@ -493,43 +1295,245 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: COLORS.text,
   },
-  refreshBtn: {
+  refreshBtnStitch: {
     width: 48,
     height: 48,
-  },
-  refreshBtnContent: {
-    width: 48,
-    height: 48,
+    backgroundColor: COLORS.surfaceCharcoal,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 24,
   },
-  filtersSection: {
-    paddingBottom: 8,
+  quickFiltersWrapper: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    marginBottom: 8,
   },
-  filterScrollView: {
+  quickFiltersContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingRight: 20,
+  },
+  filterActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 2,
+    borderColor: COLORS.secondary,
+    borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 6,
   },
-  filterGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  filterPillContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  filterPillText: {
+  filterActionButtonText: {
     fontFamily: FONTS.bold,
-    fontSize: 13,
+    fontSize: 14,
     color: COLORS.text,
   },
-  filterPillTextSelected: {
+  badgeSmall: {
+    backgroundColor: COLORS.secondary,
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  badgeSmallText: {
     fontFamily: FONTS.bold,
-    color: COLORS.border,
+    fontSize: 10,
+    color: COLORS.bg,
+  },
+  sortActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: COLORS.surfaceCharcoal,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  sortActionButtonText: {
+    fontFamily: FONTS.bold,
+    fontSize: 14,
+    color: COLORS.textMuted,
+  },
+  quickFilterChip: {
+    backgroundColor: COLORS.surfaceCharcoal,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  quickFilterChipActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  quickFilterChipText: {
+    fontFamily: FONTS.bold,
+    fontSize: 14,
+    color: COLORS.textMuted,
+  },
+  quickFilterChipTextActive: {
+    color: COLORS.bg,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(19, 19, 19, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalWrapper: {
+    width: '100%',
+    maxWidth: 340,
+    maxHeight: '80%',
+  },
+  modalContentCard: {
+    backgroundColor: COLORS.surfaceCharcoal,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 20,
+    padding: 16,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    paddingBottom: 12,
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontFamily: FONTS.extraBold,
+    fontSize: 20,
+    color: COLORS.primary,
+    letterSpacing: 0.5,
+  },
+  modalScrollBody: {
+    gap: 10,
+    paddingBottom: 4,
+  },
+  modalScrollView: {
+    maxHeight: 380,
+  },
+  modalSectionLabel: {
+    fontFamily: FONTS.bold,
+    fontSize: 11,
+    color: COLORS.textMuted,
+    letterSpacing: 0.5,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  chipsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
+  },
+  chipItem: {
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  chipItemSelected: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  chipItemText: {
+    fontFamily: FONTS.bold,
+    fontSize: 12,
+    color: COLORS.text,
+  },
+  chipItemTextSelected: {
+    color: COLORS.bg,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  expiredToggleContent: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 20,
+  },
+  expiredToggleText: {
+    fontFamily: FONTS.bold,
+    fontSize: 11,
+    color: COLORS.textMuted,
+  },
+  expiredToggleTextActive: {
+    color: COLORS.bg,
+  },
+  modalActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 20,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    paddingTop: 16,
+  },
+  modalActionBtnHalf: {
+    flex: 1,
+    height: 44,
+  },
+  modalActionBtnFull: {
+    width: '100%',
+    height: 44,
+  },
+  modalActionBtnContent: {
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalActionBtnText: {
+    fontFamily: FONTS.bold,
+    fontSize: 14,
+    color: COLORS.bg,
+    letterSpacing: 0.5,
+  },
+  sortOptionsList: {
+    gap: 8,
+    marginBottom: 8,
+  },
+  sortOptionItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: COLORS.bg,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  sortOptionItemSelected: {
+    borderColor: COLORS.primary,
+  },
+  sortOptionText: {
+    fontFamily: FONTS.bold,
+    fontSize: 14,
+    color: COLORS.text,
+  },
+  sortOptionTextSelected: {
+    color: COLORS.primary,
   },
   center: {
     flex: 1,
@@ -558,7 +1562,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingBottom: 40,
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
   },
   featuredSection: {
     marginVertical: 16,
@@ -569,61 +1573,166 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  sectionTitle: {
+    fontFamily: FONTS.bold,
+    fontSize: 20,
+    color: COLORS.text,
+  },
+  sectionSubtitle: {
+    fontFamily: FONTS.medium,
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginTop: 4,
+  },
+  // Live stat badge next to Featured Loot title
+  liveStatBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(221,183,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(221,183,255,0.2)',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLORS.success,
+  },
+  liveStatText: {
+    fontFamily: FONTS.medium,
+    fontSize: 12,
+    color: COLORS.textMuted,
+  },
+  liveStatCount: {
+    fontFamily: FONTS.extraBold,
+    fontSize: 13,
+    color: COLORS.primary,
+  },
   sectionTitleWithIcon: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
     justifyContent: 'space-between',
   },
-  sectionTitle: {
-    fontFamily: FONTS.bold,
-    fontSize: 18,
-    color: COLORS.text,
-    letterSpacing: 1,
+  // Filter modal card/row styles
+  filterCard: {
+    backgroundColor: COLORS.bg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    overflow: 'hidden',
+    marginBottom: 0,
   },
-  latestPillsRow: {
+  filterCardHeader: {
     flexDirection: 'row',
-    gap: 6,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
   },
-  latestPillGreen: {
-    borderWidth: 1,
-    borderColor: '#39ff14',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    backgroundColor: 'rgba(57, 255, 20, 0.05)',
+  filterCardTitle: {
+    fontFamily: FONTS.bold,
+    fontSize: 11,
+    color: COLORS.textMuted,
+    letterSpacing: 0.8,
   },
-  latestPillGray: {
-    borderWidth: 1,
-    borderColor: '#64748b',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    backgroundColor: 'rgba(100, 116, 139, 0.05)',
-  },
-  latestPillText: {
-    fontFamily: FONTS.mono,
+  filterCardHint: {
+    fontFamily: FONTS.medium,
     fontSize: 10,
-    color: '#39ff14',
+    color: 'rgba(255,255,255,0.25)',
+    letterSpacing: 0.5,
   },
-  latestPillTextGray: {
-    fontFamily: FONTS.mono,
-    fontSize: 10,
-    color: '#64748b',
+  filterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 9,
+  },
+  filterRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  filterRowLabel: {
+    flex: 1,
+    fontFamily: FONTS.medium,
+    fontSize: 12,
+    color: COLORS.textMuted,
+  },
+  filterRowLabelActive: {
+    color: COLORS.text,
+    fontFamily: FONTS.bold,
+  },
+  filterRowSub: {
+    fontFamily: FONTS.medium,
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 1,
+    opacity: 0.7,
+  },
+  filterCheckbox: {
+    width: 17,
+    height: 17,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: COLORS.textMuted,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  filterCheckboxActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  filterRadioOuter: {
+    width: 17,
+    height: 17,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: COLORS.textMuted,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  filterRadioOuterActive: {
+    borderColor: COLORS.primary,
+  },
+  filterRadioInner: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: COLORS.primary,
+  },
+  filterPlatformIconBg: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   featuredCarousel: {
     gap: 16,
     paddingBottom: 8,
   },
   featuredCard: {
-    width: 280,
-    backgroundColor: COLORS.white,
+    width: 300,
+    backgroundColor: COLORS.surfaceCharcoal,
     borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 24,
+    borderColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 16,
     overflow: 'hidden',
-    height: 180,
+    height: 285,
     position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.4,
+    shadowRadius: 30,
+    elevation: 8,
   },
   featuredImage: {
     width: '100%',
@@ -633,290 +1742,319 @@ const styles = StyleSheet.create({
   },
   featuredImageOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(11, 16, 30, 0.55)',
+    backgroundColor: 'rgba(19, 19, 19, 0.65)',
   },
-  featuredTopBadges: {
+  featuredTimerPill: {
     position: 'absolute',
-    top: 12,
-    left: 12,
-    right: 12,
+    top: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  featuredTimerIconText: {
+    fontSize: 14,
+    color: COLORS.warning,
+  },
+  featuredTimerText: {
+    fontFamily: FONTS.mono,
+    fontSize: 12,
+    color: '#ffffff',
+  },
+  featuredContent: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 16,
+    gap: 8,
+  },
+  featuredBadgesRow: {
     flexDirection: 'row',
     gap: 8,
   },
-  featuredFreeKeepBadge: {
-    borderWidth: 1,
-    borderColor: '#39ff14',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-  },
-  featuredFreeKeepText: {
-    fontFamily: FONTS.mono,
-    fontSize: 10,
-    color: '#39ff14',
-  },
   featuredPlatformBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surfaceCharcoal,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(93, 230, 255, 0.3)',
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: 6,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
   },
   featuredPlatformBadgeText: {
-    fontFamily: FONTS.mono,
+    fontFamily: FONTS.bold,
     fontSize: 10,
-    color: '#dee2f6',
+    color: COLORS.secondary,
   },
-  featuredBottomRow: {
-    position: 'absolute',
-    bottom: 12,
-    left: 12,
-    right: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
+  featuredLiveBadge: {
+    backgroundColor: COLORS.surfaceCharcoal,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  featuredLiveBadgeText: {
+    fontFamily: FONTS.bold,
+    fontSize: 10,
+    color: COLORS.text,
   },
   featuredTitleText: {
     fontFamily: FONTS.bold,
-    fontSize: 18,
+    fontSize: 22,
     color: '#ffffff',
-    flex: 1,
-    marginRight: 8,
   },
-  claimNowBtn: {
-    backgroundColor: '#39ff14',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
+  featuredClaimButton: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 12,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 4,
+    marginTop: 8,
   },
-  claimNowBtnText: {
-    fontFamily: FONTS.bold,
-    fontSize: 12,
-    color: '#0b101e',
-    letterSpacing: 0.5,
+  featuredClaimButtonText: {
+    fontFamily: FONTS.extraBold,
+    fontSize: 16,
+    color: COLORS.bg,
   },
   freshFindingsHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 16,
+    alignItems: 'flex-end',
+    marginTop: 24,
     marginBottom: 16,
-  },
-  incomingLabel: {
-    fontFamily: FONTS.mono,
-    fontSize: 12,
-    color: COLORS.secondary,
-    letterSpacing: 1,
   },
   freshFindingsTitle: {
     fontFamily: FONTS.bold,
-    fontSize: 22,
+    fontSize: 20,
     color: COLORS.text,
   },
-  liveIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: COLORS.surfaceHighest,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: COLORS.warning,
-  },
-  liveText: {
+  viewAllText: {
     fontFamily: FONTS.bold,
-    fontSize: 12,
-    color: COLORS.text,
+    fontSize: 14,
+    color: COLORS.secondary,
   },
-  freshItemCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: COLORS.white,
+  questCard: {
+    backgroundColor: COLORS.surfaceCharcoal,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255, 255, 255, 0.05)',
     borderRadius: 16,
-    padding: 12,
-    marginBottom: 12,
-  },
-  thumbWrapper: {
-    width: 64,
-    height: 64,
-    borderRadius: 8,
-    borderWidth: 1,
     overflow: 'hidden',
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    elevation: 4,
   },
-  thumbImage: {
+  cardImageContainer: {
+    height: 160,
+    width: '100%',
+    position: 'relative',
+  },
+  cardImage: {
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
   },
-  freshItemDetailsContainer: {
-    flex: 1,
-    justifyContent: 'center',
+  cardImageGradient: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(19, 19, 19, 0.55)',
   },
-  typeBadgeRow: {
-    marginBottom: 4,
+  cardContent: {
+    padding: 16,
+    paddingTop: 8,
+    marginTop: -40,
+    backgroundColor: 'transparent',
   },
-  typeBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    borderWidth: 1,
-  },
-  typeBadgeGame: {
-    borderColor: '#39ff14',
-    backgroundColor: 'rgba(57, 255, 20, 0.05)',
-  },
-  typeBadgeItem: {
-    borderColor: '#00e3fd',
-    backgroundColor: 'rgba(0, 227, 253, 0.05)',
-  },
-  typeBadgeDlc: {
-    borderColor: '#f6d1ff',
-    backgroundColor: 'rgba(246, 209, 255, 0.05)',
-  },
-  typeBadgeText: {
-    fontFamily: FONTS.mono,
-    fontSize: 10,
-  },
-  typeBadgeTextGame: {
-    color: '#39ff14',
-  },
-  typeBadgeTextItem: {
-    color: '#00e3fd',
-  },
-  typeBadgeTextDlc: {
-    color: '#f6d1ff',
-  },
-  freshItemTitle: {
+  questTitle: {
     fontFamily: FONTS.bold,
+    fontSize: 22,
+    color: '#ffffff',
+    lineHeight: 28,
+    marginBottom: 12,
+  },
+  expiredTitle: {
+    textDecorationLine: 'line-through',
+    opacity: 0.6,
+  },
+  statusBlock: {
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 12,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+    marginBottom: 12,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  timerWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  timerIconText: {
     fontSize: 16,
-    color: COLORS.text,
-    marginBottom: 2,
   },
-  freshItemPlatform: {
-    fontFamily: FONTS.medium,
-    fontSize: 13,
-    color: '#64748b',
-  },
-  snipeButtonWrapper: {
-    justifyContent: 'center',
-  },
-  snipeBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  snipeBtnText: {
-    fontFamily: FONTS.bold,
-    fontSize: 13,
-  },
-
-  expiredItemCard: {
-    backgroundColor: 'rgba(239, 68, 68, 0.08)',
-  },
-  expiredFeaturedCard: {
-    backgroundColor: 'rgba(239, 68, 68, 0.08)',
-  },
-  expiredBadge: {
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-    borderWidth: 1,
-    borderColor: '#ff8888',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  expiredBadgeText: {
+  timerText: {
     fontFamily: FONTS.mono,
-    fontSize: 11,
-    color: '#ff8888',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  statusLabel: {
+    fontFamily: FONTS.bold,
+    fontSize: 12,
+    textTransform: 'uppercase',
+  },
+  progressBarBg: {
+    height: 6,
+    backgroundColor: COLORS.surfaceHigh,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  badgesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  badgeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  badgeItemText: {
+    fontFamily: FONTS.bold,
+    fontSize: 12,
+    color: COLORS.textMuted,
+  },
+  badgeItemTasks: {
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 36, 73, 0.3)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  badgeItemTasksText: {
+    fontFamily: FONTS.bold,
+    fontSize: 12,
+    color: COLORS.warning,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  claimedCountText: {
+    fontFamily: FONTS.bold,
+    fontSize: 12,
+    color: COLORS.textMuted,
+  },
+  claimButton: {
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  claimButtonContent: {
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  claimButtonText: {
+    fontFamily: FONTS.bold,
+    fontSize: 14,
+    letterSpacing: 0.5,
+  },
+  expiredItemCard: {
+    backgroundColor: 'rgba(255, 36, 73, 0.05)',
+    borderColor: 'rgba(255, 36, 73, 0.2)',
+  },
+  nsfwThumbOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(19, 19, 19, 0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  nsfwThumbText: {
+    fontFamily: FONTS.bold,
+    fontSize: 14,
+    color: COLORS.warning,
+    letterSpacing: 1,
   },
   nsfwFeaturedOverlay: {
     ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.4)',
     zIndex: 10,
   },
   nsfwBadge: {
     borderWidth: 1.5,
-    borderColor: '#ef4444',
+    borderColor: COLORS.warning,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    backgroundColor: 'rgba(255, 36, 73, 0.15)',
   },
   nsfwBadgeText: {
-    fontFamily: FONTS.mono,
+    fontFamily: FONTS.bold,
     fontSize: 14,
-    color: '#ff8888',
-    fontWeight: 'bold',
+    color: COLORS.warning,
     letterSpacing: 1,
   },
-  nsfwThumbOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
+  footerLoader: {
+    paddingVertical: 20,
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
   },
-  nsfwThumbText: {
+  footerLoaderText: {
     fontFamily: FONTS.mono,
-    fontSize: 10,
-    color: '#ff8888',
-    fontWeight: 'bold',
+    fontSize: 12,
+    color: COLORS.primary,
   },
-  nsfwInlineBadge: {
-    borderColor: '#ff8888',
-    backgroundColor: 'rgba(255, 136, 136, 0.05)',
-    borderWidth: 1,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+  footerEnd: {
+    paddingVertical: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  nsfwInlineBadgeText: {
+  footerEndText: {
     fontFamily: FONTS.mono,
-    fontSize: 10,
-    color: '#ff8888',
-    fontWeight: 'bold',
-  },
-  featuredTasksBadge: {
-    borderWidth: 1,
-    borderColor: COLORS.warning,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-  },
-  featuredTasksText: {
-    fontFamily: FONTS.mono,
-    fontSize: 10,
-    color: COLORS.warning,
-  },
-  tasksInlineBadge: {
-    borderColor: COLORS.warning,
-    backgroundColor: 'rgba(255, 214, 0, 0.08)',
-    borderWidth: 1,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  tasksInlineBadgeText: {
-    fontFamily: FONTS.mono,
-    fontSize: 10,
-    color: COLORS.warning,
-    fontWeight: 'bold',
+    fontSize: 12,
+    color: COLORS.textMuted,
   },
 });

@@ -164,7 +164,11 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
 
         // 2. Check cache first
         const cached = await getCachedDeal(deal.id);
-        if (cached) {
+        const isEpic = (deal.platform || '').toLowerCase().includes('epic') || (deal.url || '').toLowerCase().includes('epicgames.com');
+        const isGamerPower = (deal.platform || '').toLowerCase().includes('gamerpower') || deal.id.startsWith('gp_');
+        const hasEnrichedDetails = cached && (cached.instructions || cached.aboutGame || isGamerPower || isEpic);
+
+        if (hasEnrichedDetails) {
           if (active) {
             const isExpiredFromFlair = expiredFeedService.isExpired(deal.id);
             const isTaskFromFlair = tasksFeedService.isTask(deal.id);
@@ -183,15 +187,13 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
         }
 
         // 3. Fallback: if details missing, enrich in background
-        if (!deal.developer || !deal.expiresAt) {
-          if (active) setEnriching(true);
+        if (active) setEnriching(true);
 
-          // Check if it's an Epic Games deal
-          const isEpic = (deal.platform || '').toLowerCase().includes('epic') || (deal.url || '').toLowerCase().includes('epicgames.com');
-          let epicData: any = null;
-          if (isEpic) {
-            epicData = await enrichEpicDeal(deal.title);
-          }
+        // Check if it's an Epic Games deal
+        let epicData: any = null;
+        if (isEpic) {
+          epicData = await enrichEpicDeal(deal.title);
+        }
 
           const botResult = await fetchBotComment(deal.id, deal.title);
           
@@ -230,14 +232,14 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               expiresAt: finalExpiresAt,
               expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
               claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
-              developer: epicData?.developer || parsed.developer || undefined,
-              releaseDate: parsed.releaseDate || undefined,
-              genres: parsed.genres.length > 0 ? parsed.genres : undefined,
-              achievements: parsed.achievements !== null ? parsed.achievements : undefined,
-              tradingCards: parsed.tradingCards !== null ? parsed.tradingCards : undefined,
-              reviewScore: parsed.reviewScore || undefined,
-              steamDbRating: parsed.steamDbRating || undefined,
-              aboutGame: epicData?.description || parsed.aboutGame || undefined,
+              developer: epicData?.developer || parsed.developer || deal.developer,
+              releaseDate: parsed.releaseDate || deal.releaseDate || undefined,
+              genres: parsed.genres.length > 0 ? parsed.genres : (deal.genres || undefined),
+              achievements: parsed.achievements !== null ? parsed.achievements : (deal.achievements || undefined),
+              tradingCards: parsed.tradingCards !== null ? parsed.tradingCards : (deal.tradingCards || undefined),
+              reviewScore: parsed.reviewScore || deal.reviewScore || undefined,
+              steamDbRating: parsed.steamDbRating || deal.steamDbRating || undefined,
+              aboutGame: epicData?.description || parsed.aboutGame || deal.aboutGame,
               instructions: parsed.instructions || undefined,
               parserConfidence: parsed.parserConfidence,
               image: resolvedImage,
@@ -267,8 +269,8 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               expiresAt: finalExpiresAt,
               expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
               claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
-              developer: epicData?.developer || undefined,
-              aboutGame: epicData?.description || undefined,
+              developer: epicData?.developer || deal.developer,
+              aboutGame: epicData?.description || deal.aboutGame,
               image: resolvedImage,
               url: epicData?.url || deal.url,
               timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
@@ -277,7 +279,6 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
             if (active) setLocalDeal(enriched);
             dealEnrichmentService.notify(enriched);
           }
-        }
       } catch (e) {
         console.error('[DetailScreen] Enrichment error:', e);
       } finally {
@@ -607,7 +608,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
         {enriching && (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="small" color={COLORS.accent} />
-            <Text style={styles.enrichingText}>Enriching quest details...</Text>
+            <Text style={styles.enrichingText}>Getting data...</Text>
           </View>
         )}
       </ScrollView>

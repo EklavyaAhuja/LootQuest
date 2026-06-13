@@ -34,6 +34,15 @@ class TasksFeedService {
   }
 
   /**
+   * Checks if the service will hit the network to fetch posts.
+   */
+  public async willFetch(forceRefresh = false): Promise<boolean> {
+    await this.initialize();
+    const now = Date.now();
+    return forceRefresh || this.tasksIds.size === 0 || (now - this.lastFetched >= CACHE_TTL);
+  }
+
+  /**
    * Fetches the Tasks flair RSS search feed from Reddit if expired or forced.
    */
   public async getTasksPostIds(forceRefresh = false): Promise<Set<string>> {

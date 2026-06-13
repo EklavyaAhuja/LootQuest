@@ -3,6 +3,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { fetchFreeGameFindings, RedditPost, parseRedditTitle } from './redditService';
 import { getAppSettings, getSeenPosts, addSeenPosts } from './storageService';
+import { getCachedDeal } from './DealCache';
+import { Deal } from '../models/Deal';
+import { normalizeTitle } from '../utils/dealUtils';
 
 let messaging: any = null;
 try {
@@ -106,6 +109,41 @@ export async function sendFreeGameNotification(post: RedditPost): Promise<void> 
 /**
  * Log a new alert to stored notification logs history
  */
+// Helper to extract Steam App ID from URL
+function extractSteamAppId(url?: string): string | null {
+  if (!url) return null;
+  const match = url.match(/\/app\/(\d+)/i);
+  return match ? match[1] : null;
+}
+
+// Helper to extract Reddit post ID (e.g. 15x123) from a full ID or URL
+function extractRedditId(idOrUrl?: string): string | null {
+  if (!idOrUrl) return null;
+  
+  if (idOrUrl.includes('reddit.com') && idOrUrl.includes('/comments/')) {
+    const match = idOrUrl.match(/\/comments\/([a-z0-9]{5,8})/i);
+    if (match) return match[1];
+  }
+  
+  const lastPart = idOrUrl.split(':').pop() || '';
+  const cleanId = lastPart.replace('t3_', '').trim();
+  if (/^[a-z0-9]{5,10}$/i.test(cleanId) && !idOrUrl.startsWith('gp_')) {
+    return cleanId;
+  }
+  return null;
+}
+
+// Helper to clean URL for comparison
+function cleanUrlForComparison(url?: string): string {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    return (u.hostname + u.pathname).toLowerCase().replace(/\/$/, '');
+  } catch {
+    return url.toLowerCase().replace(/https?:\/\//, '').replace(/\/$/, '');
+  }
+}
+
 /**
  * Log a new alert to stored notification logs history
  */
@@ -123,6 +161,90 @@ export async function addAlertLog(post: RedditPost): Promise<void> {
     const formattedType = formatType(post.type || 'game');
     const descPrefix = formattedType.toLowerCase().startsWith('free') ? '' : 'Free ';
 
+    // Resolve cover image from current feed cache or deal cache with robust matching
+    let coverImage = post.coverImage;
+
+    if (!coverImage) {
+      try {
+        const feedCacheRaw = await AsyncStorage.getItem('fgf_merged_feed_cache');
+        const feedDeals: Deal[] = feedCacheRaw ? JSON.parse(feedCacheRaw) : [];
+
+        const alertRedditId = extractRedditId(post.id) || extractRedditId(post.url);
+        const alertCleanUrl = post.url ? cleanUrlForComparison(post.url) : '';
+        const alertNormTitle = normalizeTitle(post.title);
+        const alertSteamAppId = extractSteamAppId(post.url);
+
+        let matchedDealId: string | undefined = undefined;
+
+        for (const deal of feedDeals) {
+          let isMatch = deal.id === post.id;
+
+          if (!isMatch && alertRedditId) {
+            const dealRedditId = extractRedditId(deal.id) || extractRedditId(deal.redditUrl) || extractRedditId(deal.url);
+            if (dealRedditId && dealRedditId === alertRedditId) {
+              isMatch = true;
+            }
+          }
+
+          if (!isMatch && alertSteamAppId) {
+            const dealSteamAppId = extractSteamAppId(deal.url);
+            if (dealSteamAppId && dealSteamAppId === alertSteamAppId) {
+              isMatch = true;
+            }
+          }
+
+          if (!isMatch && alertCleanUrl) {
+            const dealCleanUrl = deal.url ? cleanUrlForComparison(deal.url) : '';
+            const dealRedditCleanUrl = deal.redditUrl ? cleanUrlForComparison(deal.redditUrl) : '';
+            if (dealCleanUrl === alertCleanUrl || dealRedditCleanUrl === alertCleanUrl) {
+              isMatch = true;
+            }
+          }
+
+          if (!isMatch) {
+            const dealNormTitle = normalizeTitle(deal.title);
+            const isSamePlatform = 
+              post.platform.toLowerCase() === deal.platform.toLowerCase() ||
+              (post.platform.toLowerCase().includes('epic') && deal.platform.toLowerCase().includes('epic')) ||
+              (post.platform.toLowerCase().includes('steam') && deal.platform.toLowerCase().includes('steam'));
+            if (isSamePlatform && alertNormTitle && alertNormTitle === dealNormTitle) {
+              isMatch = true;
+            }
+          }
+
+          if (isMatch) {
+            matchedDealId = deal.id;
+            if (deal.image && deal.image !== 'placeholder') {
+              coverImage = deal.image;
+              break;
+            }
+          }
+        }
+
+        if (!coverImage) {
+          const cacheKeysToTry = new Set<string>();
+          cacheKeysToTry.add(post.id);
+          if (alertRedditId) {
+            cacheKeysToTry.add(alertRedditId);
+            cacheKeysToTry.add(`t3_${alertRedditId}`);
+          }
+          if (matchedDealId) {
+            cacheKeysToTry.add(matchedDealId);
+          }
+
+          for (const cacheKey of cacheKeysToTry) {
+            const cachedDeal = await getCachedDeal(cacheKey);
+            if (cachedDeal && cachedDeal.image && cachedDeal.image !== 'placeholder') {
+              coverImage = cachedDeal.image;
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[NotificationService] Error matching image during addAlertLog:', e);
+      }
+    }
+
     const newAlert = {
       id: post.id,
       title: isAnnouncement ? post.title : (post.cleanTitle || post.title),
@@ -133,6 +255,7 @@ export async function addAlertLog(post: RedditPost): Promise<void> {
       claimedCount: isAnnouncement ? 'Notice' : 'Active',
       actionType: post.url ? 'claim' : 'details',
       actionUrl: post.url || undefined,
+      coverImage: coverImage || undefined,
     };
 
     const updated = [newAlert, ...logs].slice(0, 50); // Keep last 50 alerts
@@ -193,8 +316,11 @@ export async function seedInitialSeenPosts(): Promise<void> {
 /**
  * Register FCM token with the backend.
  * - Skips gracefully if Firebase Messaging is unavailable (Expo Go / non-native builds).
- * - Caches the last registered token in AsyncStorage to avoid redundant backend calls.
- * - Automatically re-registers if the token changes (e.g. after app reinstall).
+ * - Sends the token on EVERY app launch (heartbeat/re-sync) so the backend
+ *   automatically re-populates its token table after any redeploy that wipes
+ *   in-memory or SQLite state. The backend upserts via INSERT OR REPLACE,
+ *   so duplicate registrations are safe and cheap.
+ * - Fire-and-forget: never blocks app startup.
  */
 export async function registerFCMToken(): Promise<void> {
   try {
@@ -232,31 +358,30 @@ export async function registerFCMToken(): Promise<void> {
       console.log('[NotificationService] FCM Token acquired (FULL):', fcmToken);
     }
 
-    // Check if we already registered this exact token with the backend
-    const cachedToken = await AsyncStorage.getItem(FCM_TOKEN_CACHE_KEY);
-    if (cachedToken === fcmToken) {
-      if (__DEV__) {
-        console.log('[NotificationService] FCM token unchanged.');
-      }
-      return;
-    }
-
-    // Token is new or changed — register with backend
-    const response = await fetch('https://lootquest-backend.onrender.com/register', {
+    // Always re-send the token to the backend on every launch so it survives
+    // backend redeployments that wipe in-memory / SQLite state.
+    // This is fire-and-forget — we intentionally do NOT await the registration
+    // call in a way that would block the caller, but we do await it here so
+    // errors are caught and logged without crashing the app.
+    fetch('https://lootquest-backend.onrender.com/register', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: fcmToken }),
-    });
-
-    if (response.ok) {
-      // Cache the successfully registered token
-      await AsyncStorage.setItem(FCM_TOKEN_CACHE_KEY, fcmToken);
-      console.log('[NotificationService] ✅ FCM token registered successfully on backend.');
-    } else {
-      console.error('[NotificationService] Failed to register FCM token. Backend status:', response.status);
-    }
+    })
+      .then(async (response) => {
+        if (response.ok) {
+          // Keep the cache in sync so token-change listeners still work correctly
+          await AsyncStorage.setItem(FCM_TOKEN_CACHE_KEY, fcmToken);
+          if (__DEV__) {
+            console.log('[NotificationService] ✅ FCM token re-synced with backend.');
+          }
+        } else {
+          console.error('[NotificationService] Failed to re-sync FCM token. Backend status:', response.status);
+        }
+      })
+      .catch((err) => {
+        console.error('[NotificationService] Network error re-syncing FCM token:', err);
+      });
   } catch (error) {
     console.error('[NotificationService] Error in registerFCMToken:', error);
   }
@@ -267,7 +392,7 @@ export async function registerFCMToken(): Promise<void> {
  */
 async function handleRemoteMessage(remoteMessage: any): Promise<void> {
   try {
-    const { title, body, url, postId, isCustom } = remoteMessage.data || {};
+    const { title, body, url, postId, isCustom, image } = remoteMessage.data || {};
     if (title || body) {
       if (isCustom === 'true') {
         const mockPost: RedditPost = {
@@ -329,6 +454,7 @@ async function handleRemoteMessage(remoteMessage: any): Promise<void> {
         selftext: '',
         domain: '',
         isTask: parsed.isTask,
+        coverImage: image || undefined,
       };
 
       await sendFreeGameNotification(mockPost);

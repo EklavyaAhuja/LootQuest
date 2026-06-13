@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Deal } from '../models/Deal';
 
 const CACHE_PREFIX = 'fgf_deal_cache_';
-const CURRENT_VERSION = 18;
+const CURRENT_VERSION = 20;
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 export interface CacheEntry {

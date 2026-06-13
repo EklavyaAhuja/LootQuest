@@ -2,8 +2,8 @@ export interface Deal {
   id: string;
   title: string;
   platform: string;
-  type: "full_game" | "dlc" | "beta" | "item";
-  claimMethod: "one_click" | "tasks";
+  type: "full_game" | "dlc" | "beta" | "item" | "mobile_game" | "loot";
+  claimMethod: "one_click" | "tasks" | "unknown";
   image?: string;
   url: string;
   author?: string;
@@ -25,5 +25,13 @@ export interface Deal {
   isNsfw?: boolean;
   createdAt?: number; // Unix timestamp in milliseconds
   redditUrl?: string;
+  source?: "reddit" | "gamerpower" | string;
+  gamerPowerId?: string;
+  claimedUsers?: number;
+  worth?: string;
+  endDate?: string | null;
+  platforms?: string[];
+  isExpired?: boolean;
+  timeLeft?: string;
 }
 
