@@ -331,3 +331,44 @@ export function getCleanPlatform(
 
   return "PC";
 }
+
+/**
+ * Resolves a GamerPower redirect URL to the direct storefront URL (Steam/Epic/etc.)
+ */
+export async function resolveGamerPowerRedirect(url: string): Promise<string> {
+  if (!url || !url.includes('gamerpower.com/open/')) {
+    return url;
+  }
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      redirect: 'manual',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      if (location) return location;
+    }
+    if (response.status === 200) {
+      return response.url;
+    }
+  } catch (err) {
+    console.warn('[dealUtils] Manual redirect check failed:', err);
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+    return response.url || url;
+  } catch (err) {
+    console.warn('[dealUtils] Fallback redirect check failed:', err);
+    return url;
+  }
+}
+

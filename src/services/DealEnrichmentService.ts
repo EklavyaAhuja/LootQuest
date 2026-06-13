@@ -7,7 +7,7 @@ import { tasksFeedService } from './TasksFeedService';
 import { enrichEpicDeal } from './EpicGamesEnricher';
 import { enrichSteamDeal } from './SteamGamesEnricher';
 import { fetchImageFromUrl } from '../utils/imageResolver';
-import { getTimeLeft } from '../utils/dealUtils';
+import { getTimeLeft, resolveGamerPowerRedirect } from '../utils/dealUtils';
 
 const MAX_CONCURRENT_ENRICHMENTS = 3;
 
@@ -88,6 +88,85 @@ class DealEnrichmentService {
       return;
     }
 
+    // If it's a GamerPower post, resolve redirect URL first, and enrich via Steam/Epic storefronts and/or Reddit comments RSS
+    if (deal.id.startsWith('gp_')) {
+      try {
+        let resolvedUrl = deal.url;
+        if (deal.url && deal.url.includes('gamerpower.com/open/')) {
+          resolvedUrl = await resolveGamerPowerRedirect(deal.url);
+        }
+
+        let steamData: any = null;
+        let epicData: any = null;
+
+        const isSteam = (deal.platform || '').toLowerCase().includes('steam') || resolvedUrl.toLowerCase().includes('steampowered.com');
+        if (isSteam) {
+          steamData = await enrichSteamDeal(resolvedUrl);
+        }
+
+        const isEpic = (deal.platform || '').toLowerCase().includes('epic') || resolvedUrl.toLowerCase().includes('epicgames.com');
+        if (isEpic) {
+          epicData = await enrichEpicDeal(deal.title);
+        }
+
+        // Try to fetch bot comment from Reddit if merged
+        let botResult = null;
+        if (deal.redditUrl) {
+          botResult = await fetchBotComment(deal.id, deal.title, deal.redditUrl);
+        }
+
+        const isExpiredFromFlair = expiredFeedService.isExpired(deal.id);
+        const isTaskFromFlair = tasksFeedService.isTask(deal.id);
+
+        let parsed: any = {};
+        let finalExpiresAt = epicData?.expiresAt || deal.expiresAt;
+        let botCommentRaw = '';
+
+        if (botResult) {
+          botCommentRaw = botResult.body;
+          parsed = parseBotComment(botResult.body);
+          if (parsed.isFullyFree === true) {
+            finalExpiresAt = parsed.expiresAt || parseExpiryFromPostBody(deal.description) || finalExpiresAt;
+          } else if (parsed.isFullyFree === false) {
+            finalExpiresAt = undefined;
+          } else {
+            const isFree = checkIsFullyFree(deal.title, deal.description);
+            if (isFree) {
+              finalExpiresAt = parseExpiryFromPostBody(deal.description) || finalExpiresAt;
+            }
+          }
+        }
+
+        const enriched: Deal = {
+          ...deal,
+          url: epicData?.url || parsed.storeUrl || resolvedUrl,
+          originalPrice: parsed.originalPrice || deal.originalPrice,
+          currentPrice: parsed.price || deal.currentPrice,
+          expiresAt: finalExpiresAt,
+          expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
+          claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
+          developer: steamData?.developer || epicData?.developer || parsed.developer || deal.developer,
+          aboutGame: steamData?.description || epicData?.description || parsed.aboutGame || deal.aboutGame,
+          instructions: parsed.instructions || deal.instructions,
+          image: steamData?.image || epicData?.image || deal.image || 'placeholder',
+          genres: steamData?.genres || (parsed.genres && parsed.genres.length > 0 ? parsed.genres : deal.genres),
+          releaseDate: steamData?.releaseDate || parsed.releaseDate || deal.releaseDate,
+          achievements: parsed.achievements !== null && parsed.achievements !== undefined ? parsed.achievements : deal.achievements,
+          tradingCards: parsed.tradingCards !== null && parsed.tradingCards !== undefined ? parsed.tradingCards : deal.tradingCards,
+          reviewScore: parsed.reviewScore || deal.reviewScore,
+          steamDbRating: parsed.steamDbRating || deal.steamDbRating,
+          timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
+        };
+
+        await saveCachedDeal(deal.id, enriched, botCommentRaw);
+        onUpdate(enriched);
+        this.notify(enriched);
+        return;
+      } catch (err) {
+        console.warn(`[DealEnrichmentService] GamerPower enrichment failed for ${deal.id}:`, err);
+      }
+    }
+
     // Check if it's an Epic Games deal (safe to enrich in background since it doesn't query Reddit)
     const isEpic = (deal.platform || '').toLowerCase().includes('epic') || (deal.url || '').toLowerCase().includes('epicgames.com');
     if (isEpic) {
@@ -156,8 +235,14 @@ class DealEnrichmentService {
    * This is used by the background prefetch queue.
    */
   public async enrichAndCache(deal: Deal): Promise<void> {
+    // Resolve GamerPower redirect if necessary
+    let resolvedUrl = deal.url;
+    if (deal.url && deal.url.includes('gamerpower.com/open/')) {
+      resolvedUrl = await resolveGamerPowerRedirect(deal.url);
+    }
+
     // Check if it's an Epic Games deal
-    const isEpic = (deal.platform || '').toLowerCase().includes('epic') || (deal.url || '').toLowerCase().includes('epicgames.com');
+    const isEpic = (deal.platform || '').toLowerCase().includes('epic') || resolvedUrl.toLowerCase().includes('epicgames.com');
     let epicData: any = null;
     if (isEpic) {
       try {
@@ -168,17 +253,17 @@ class DealEnrichmentService {
     }
 
     // Check if it's a Steam deal
-    const isSteam = (deal.platform || '').toLowerCase().includes('steam') || (deal.url || '').toLowerCase().includes('steampowered.com');
+    const isSteam = (deal.platform || '').toLowerCase().includes('steam') || resolvedUrl.toLowerCase().includes('steampowered.com');
     let steamData: any = null;
     if (isSteam) {
       try {
-        steamData = await enrichSteamDeal(deal.url);
+        steamData = await enrichSteamDeal(resolvedUrl);
       } catch (err) {
         console.warn('[DealEnrichmentService] Steam background enrichment failed:', err);
       }
     }
 
-    const botResult = await fetchBotComment(deal.id, deal.title);
+    const botResult = await fetchBotComment(deal.id, deal.title, deal.redditUrl);
     
     if (botResult) {
       const { body: botComment, storeUrl: botStoreUrl } = botResult;
@@ -205,7 +290,7 @@ class DealEnrichmentService {
         resolvedImage = await fetchImageFromUrl(botStoreUrl, deal.title);
       }
       if (!resolvedImage) {
-        resolvedImage = await fetchImageFromUrl(deal.url, deal.title);
+        resolvedImage = await fetchImageFromUrl(resolvedUrl, deal.title);
       }
 
       const enriched: Deal = {
@@ -226,7 +311,7 @@ class DealEnrichmentService {
         instructions: parsed.instructions || undefined,
         parserConfidence: parsed.parserConfidence,
         image: steamData?.image || epicData?.image || resolvedImage,
-        url: epicData?.url || parsed.storeUrl || deal.url,
+        url: epicData?.url || parsed.storeUrl || resolvedUrl,
         timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
       };
 
@@ -243,7 +328,7 @@ class DealEnrichmentService {
 
       let resolvedImage = steamData?.image || epicData?.image || deal.image;
       if (!resolvedImage) {
-        resolvedImage = await fetchImageFromUrl(deal.url, deal.title);
+        resolvedImage = await fetchImageFromUrl(resolvedUrl, deal.title);
       }
 
       const basicEnriched: Deal = {
@@ -256,7 +341,7 @@ class DealEnrichmentService {
         image: resolvedImage || 'placeholder',
         genres: steamData?.genres || deal.genres,
         releaseDate: steamData?.releaseDate || deal.releaseDate,
-        url: epicData?.url || deal.url,
+        url: epicData?.url || resolvedUrl,
         timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
       };
 

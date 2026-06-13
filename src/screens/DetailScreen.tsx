@@ -27,7 +27,7 @@ import { fetchImageFromUrl } from '../utils/imageResolver';
 import { COLORS, FONTS } from '../theme/theme';
 import BouncyPressable from '../components/BouncyPressable';
 import * as WebBrowser from 'expo-web-browser';
-import { isDealClaimed, getTimeLeft } from '../utils/dealUtils';
+import { isDealClaimed, getTimeLeft, resolveGamerPowerRedirect } from '../utils/dealUtils';
 import Svg, { Path } from 'react-native-svg';
 import StoreIcon from '../components/StoreIcon';
 import {
@@ -190,20 +190,27 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
         // 3. Fallback: if details missing, enrich in background
         if (active) setEnriching(true);
 
+        // Resolve GamerPower redirect if necessary
+        let resolvedUrl = deal.url;
+        if (deal.url && deal.url.includes('gamerpower.com/open/')) {
+          resolvedUrl = await resolveGamerPowerRedirect(deal.url);
+        }
+
         // Check if it's an Epic Games deal
         let epicData: any = null;
-        if (isEpic) {
+        const isEpicStore = (deal.platform || '').toLowerCase().includes('epic') || resolvedUrl.toLowerCase().includes('epicgames.com');
+        if (isEpicStore) {
           epicData = await enrichEpicDeal(deal.title);
         }
 
         // Check if it's a Steam deal
-        const isSteam = (deal.platform || '').toLowerCase().includes('steam') || (deal.url || '').toLowerCase().includes('steampowered.com');
+        const isSteamStore = (deal.platform || '').toLowerCase().includes('steam') || resolvedUrl.toLowerCase().includes('steampowered.com');
         let steamData: any = null;
-        if (isSteam) {
-          steamData = await enrichSteamDeal(deal.url);
+        if (isSteamStore) {
+          steamData = await enrichSteamDeal(resolvedUrl);
         }
 
-          const botResult = await fetchBotComment(deal.id, deal.title);
+          const botResult = await fetchBotComment(deal.id, deal.title, deal.redditUrl);
           
           if (botResult) {
             const { body: botComment } = botResult;
@@ -230,7 +237,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               resolvedImage = await fetchImageFromUrl(parsed.storeUrl, deal.title);
             }
             if (!resolvedImage) {
-              resolvedImage = await fetchImageFromUrl(deal.url, deal.title);
+              resolvedImage = await fetchImageFromUrl(resolvedUrl, deal.title);
             }
 
             const enriched: Deal = {
@@ -251,7 +258,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               instructions: parsed.instructions || undefined,
               parserConfidence: parsed.parserConfidence,
               image: resolvedImage,
-              url: epicData?.url || parsed.storeUrl || deal.url,
+              url: epicData?.url || parsed.storeUrl || resolvedUrl,
               timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
             };
 
@@ -269,7 +276,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
 
             let resolvedImage = steamData?.image || epicData?.image || deal.image;
             if (!resolvedImage) {
-              resolvedImage = await fetchImageFromUrl(deal.url, deal.title);
+              resolvedImage = await fetchImageFromUrl(resolvedUrl, deal.title);
             }
 
             const enriched: Deal = {
@@ -282,7 +289,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               image: resolvedImage,
               genres: steamData?.genres || deal.genres,
               releaseDate: steamData?.releaseDate || deal.releaseDate,
-              url: epicData?.url || deal.url,
+              url: epicData?.url || resolvedUrl,
               timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
             };
             await saveCachedDeal(deal.id, enriched, '');

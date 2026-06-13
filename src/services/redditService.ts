@@ -570,13 +570,23 @@ export interface BotCommentResult {
  * Fetches the helper bot comment (from FGF_Info_Bot) for a given post using ONLY comments RSS.
  * Returns both the cleaned text body and the extracted Steam/GOG store URL.
  */
-export async function fetchBotComment(postId: string, postTitle?: string): Promise<BotCommentResult | null> {
-  // If it's a GamerPower post (starts with gp_), it won't have a direct Reddit comment
+export async function fetchBotComment(postId: string, postTitle?: string, redditUrl?: string): Promise<BotCommentResult | null> {
+  let finalPostId = postId;
+  // If it's a GamerPower post (starts with gp_), check if we have a merged Reddit URL
   if (postId.startsWith('gp_')) {
-    return null;
+    if (redditUrl) {
+      const match = redditUrl.match(/\/comments\/([a-z0-9]+)/i);
+      if (match) {
+        finalPostId = match[1];
+      } else {
+        return null;
+      }
+    } else {
+      return null;
+    }
   }
   
-  const targetUrl = `https://old.reddit.com/comments/${postId}/.rss`;
+  const targetUrl = `https://old.reddit.com/comments/${finalPostId}/.rss`;
   
   try {
     console.log(`[RedditService] Fetching comments RSS for post ${postId} directly...`);
