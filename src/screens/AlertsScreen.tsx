@@ -5,7 +5,7 @@ import BouncyPressable from '../components/BouncyPressable';
 import { User, Clock } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
-import Svg, { Circle, Line, Path, Defs, LinearGradient, Stop } from 'react-native-svg';
+import Svg, { Circle, Line, Path, Defs, LinearGradient, Stop, Filter, GaussianBlur } from 'react-native-svg';
 
 interface AlertItem {
   id: string;
@@ -31,15 +31,17 @@ const RadarAnimation = () => {
   const rotateAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.loop(
+    const animation = Animated.loop(
       Animated.timing(rotateAnim, {
         toValue: 1,
         duration: 2500,
         easing: Easing.linear,
         useNativeDriver: true,
       })
-    ).start();
-  }, [rotateAnim]);
+    );
+    animation.start();
+    return () => animation.stop();
+  }, []);
 
   const rotate = rotateAnim.interpolate({
     inputRange: [0, 1],
@@ -60,17 +62,21 @@ const RadarAnimation = () => {
       <Animated.View style={[styles.radarSweep, { transform: [{ rotate }] }]}>
         <Svg width={90} height={90}>
           <Defs>
+            {/* Blur filter to make the seagreen light spread out and glow */}
+            <Filter id="radarGlow" x="-20%" y="-20%" width="140%" height="140%">
+              <GaussianBlur stdDeviation="6" />
+            </Filter>
             {/* Symmetrical gradient from left edge to center to right edge */}
             <LinearGradient id="sweepGrad" x1="0" y1="0" x2="1" y2="0">
               <Stop offset="0%" stopColor="seagreen" stopOpacity="0.0" />
-              <Stop offset="50%" stopColor="seagreen" stopOpacity="0.65" />
+              <Stop offset="50%" stopColor="seagreen" stopOpacity="0.75" />
               <Stop offset="100%" stopColor="seagreen" stopOpacity="0.0" />
             </LinearGradient>
           </Defs>
-          {/* Symmetrical 90-degree sector centered around the dashed line */}
-          <Path d="M 45 45 L 13.9 13.9 A 44 44 0 0 1 76.1 13.9 Z" fill="url(#sweepGrad)" />
-          {/* Dashed sweep line (white/light-grey) directly in the middle */}
-          <Line x1={45} y1={45} x2={45} y2={1} stroke="#ffffff" strokeWidth={1} strokeDasharray="2, 2" />
+          {/* Blurred seagreen 120-degree sector centered around the dashed line */}
+          <Path d="M 45 45 L 12.1 26 A 38 38 0 0 1 77.9 26 Z" fill="url(#sweepGrad)" filter="url(#radarGlow)" />
+          {/* Sharp dashed sweep line (white/light-grey) directly in the middle */}
+          <Line x1={45} y1={45} x2={45} y2={1} stroke="#ffffff" strokeWidth={1.2} strokeDasharray="2, 2" />
         </Svg>
       </Animated.View>
 
