@@ -29,9 +29,12 @@ const COVER_IMAGES = [
 
 const RadarAnimation = () => {
   const rotateAnim = useRef(new Animated.Value(0)).current;
+  const flyAnim = useRef(new Animated.Value(0)).current;
+  const blinkAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const animation = Animated.loop(
+    // Rotation loop
+    const rotateAnimation = Animated.loop(
       Animated.timing(rotateAnim, {
         toValue: 1,
         duration: 2500,
@@ -39,8 +42,34 @@ const RadarAnimation = () => {
         useNativeDriver: true,
       })
     );
-    animation.start();
-    return () => animation.stop();
+
+    // Target flight loop (32 seconds)
+    const flyAnimation = Animated.loop(
+      Animated.timing(flyAnim, {
+        toValue: 1,
+        duration: 32000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+
+    // Blinking glow loop (alternates every 1.6s)
+    const blinkAnimation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(blinkAnim, { toValue: 1, duration: 1600, easing: Easing.ease, useNativeDriver: true }),
+        Animated.timing(blinkAnim, { toValue: 0, duration: 1600, easing: Easing.ease, useNativeDriver: true }),
+      ])
+    );
+
+    rotateAnimation.start();
+    flyAnimation.start();
+    blinkAnimation.start();
+
+    return () => {
+      rotateAnimation.stop();
+      flyAnimation.stop();
+      blinkAnimation.stop();
+    };
   }, []);
 
   const rotate = rotateAnim.interpolate({
@@ -48,14 +77,35 @@ const RadarAnimation = () => {
     outputRange: ['0deg', '360deg'],
   });
 
+  const dotOpacity = blinkAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.25, 0.9],
+  });
+
+  // Interpolated paths for fly animation (scaled 0.6x from 150px CSS grid to 90px SVG grid)
+  const dot1X = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [84, 12] });
+  const dot1Y = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [60, 78] });
+
+  const dot2X = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 54] });
+  const dot2Y = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [60, -2] });
+
+  const dot3X = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [63, 10.8] });
+  const dot3Y = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [60, 10.8] });
+
+  const dot4X = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [90, 18] });
+  const dot4Y = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [66, 84] });
+
+  const dot5X = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [51, 72] });
+  const dot5Y = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [-3, 75] });
+
   return (
     <View style={styles.radarWrapper}>
       {/* Static Background Rings */}
       <Svg width={90} height={90} style={StyleSheet.absoluteFill}>
         {/* Outer Ring */}
-        <Circle cx={45} cy={45} r={44} stroke="#333333" strokeWidth={1} fill="transparent" />
+        <Circle cx={45} cy={45} r={44} stroke="rgba(46, 139, 87, 0.45)" strokeWidth={1} fill="transparent" />
         {/* Middle Dashed Ring */}
-        <Circle cx={45} cy={45} r={32} stroke="#444444" strokeWidth={1} strokeDasharray="3, 3" fill="transparent" />
+        <Circle cx={45} cy={45} r={32} stroke="rgba(46, 139, 87, 0.35)" strokeWidth={1} strokeDasharray="3, 3" fill="transparent" />
       </Svg>
 
       {/* Rotating Sweep */}
@@ -80,12 +130,19 @@ const RadarAnimation = () => {
         </Svg>
       </Animated.View>
 
+      {/* Target Blip Dots */}
+      <Animated.View style={[styles.dot, { left: dot1X, top: dot1Y, opacity: dotOpacity }]} />
+      <Animated.View style={[styles.dot, { left: dot2X, top: dot2Y, opacity: dotOpacity }]} />
+      <Animated.View style={[styles.dot, { left: dot3X, top: dot3Y, opacity: dotOpacity }]} />
+      <Animated.View style={[styles.dot, { left: dot4X, top: dot4Y, opacity: dotOpacity }]} />
+      <Animated.View style={[styles.dot, { left: dot5X, top: dot5Y, opacity: dotOpacity }]} />
+
       {/* Center Circle Overlay (sits on top of the rotating sweep to cover the center) */}
       <Svg width={90} height={90} style={StyleSheet.absoluteFill}>
         {/* Dark solid circle with stroke */}
-        <Circle cx={45} cy={45} r={18} fill={COLORS.surfaceCharcoal} stroke="#333333" strokeWidth={1} />
+        <Circle cx={45} cy={45} r={18} fill={COLORS.surfaceCharcoal} stroke="rgba(46, 139, 87, 0.45)" strokeWidth={1} />
         {/* Inner dashed ring */}
-        <Circle cx={45} cy={45} r={10} stroke="#444444" strokeWidth={1} strokeDasharray="2, 2" fill="transparent" />
+        <Circle cx={45} cy={45} r={10} stroke="rgba(46, 139, 87, 0.3)" strokeWidth={1} strokeDasharray="2, 2" fill="transparent" />
       </Svg>
     </View>
   );
@@ -694,11 +751,25 @@ const styles = StyleSheet.create({
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 45,
+    overflow: 'hidden',
   },
   radarSweep: {
     width: 90,
     height: 90,
     position: 'absolute',
+  },
+  dot: {
+    width: 4,
+    height: 4,
+    position: 'absolute',
+    borderRadius: 2,
+    backgroundColor: '#ffffff',
+    shadowColor: '#00ffb2',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 3,
+    elevation: 2,
   },
 });
 
