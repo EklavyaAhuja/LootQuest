@@ -544,7 +544,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <User size={16} color={COLORS.textMuted} />
                   <Text style={styles.heroStatValue}>
-                    {localDeal.claimedUsers ? localDeal.claimedUsers.toLocaleString() : '1,200'}
+                    {localDeal.claimedUsers ? localDeal.claimedUsers.toLocaleString() : '--'}
                   </Text>
                 </View>
               </View>
