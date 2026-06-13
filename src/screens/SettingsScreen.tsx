@@ -282,16 +282,21 @@ export default function SettingsScreen() {
         </View>
         <View style={styles.devNoteContent}>
           <Text style={styles.devNoteParagraph}>
-            LootQuest started as a simple personal project to help me track and alert myself about free game giveaways. Over time, it evolved into this full-fledged app aggregating deals across multiple platforms in real time.
+            LootQuest started as a tool I built for myself because I kept missing free game giveaways.
           </Text>
           <Text style={styles.devNoteParagraph}>
-            I hope you like it! Feedback is appreciated and shit, so feel free to use the form above to let me know what you think.
+            Over time, I kept adding things I wished existed, and somehow it turned into a full app.
+          </Text>
+          <Text style={styles.devNoteParagraph}>
+            It's still very much a personal project, so if you run into bugs, have suggestions, or think something could be better, I'd love to hear it.
+          </Text>
+          <Text style={styles.devNoteParagraph}>
+            Thanks for checking it out.
           </Text>
           <View style={styles.signatureContainer}>
-            <Text style={styles.signatureLabel}>Made with ❤️ </Text>
-            <View style={styles.highlightedName}>
-              <Text style={styles.highlightedNameText}>by Eklavya Ahuja</Text>
-            </View>
+            <Text style={styles.signatureLabel}>
+              Made with ❤️ by <Text style={styles.highlightedNameTextOnly}>Eklavya Ahuja</Text>
+            </Text>
           </View>
         </View>
       </View>
@@ -502,25 +507,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 8,
-    flexWrap: 'wrap',
   },
   signatureLabel: {
     fontFamily: FONTS.bold,
     fontSize: 12,
     color: COLORS.textMuted,
   },
-  highlightedName: {
-    backgroundColor: 'rgba(57, 255, 20, 0.08)',
-    borderWidth: 1.5,
-    borderColor: '#39ff14',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  highlightedNameText: {
+  highlightedNameTextOnly: {
     fontFamily: FONTS.bold,
-    fontSize: 12,
-    color: '#39ff14',
-    letterSpacing: 0.5,
+    color: '#39ff14', // Neon green highlight
   },
 });
