@@ -167,7 +167,7 @@ function parseRedditRssXml(xmlText: string): RedditPost[] {
 
     // 2. Link
     const permalinkMatch = entryText.match(/<link\s+href="([^"]+)"/);
-    const permalink = permalinkMatch ? permalinkMatch[1] : '';
+    const permalink = permalinkMatch ? permalinkMatch[1].replace('old.reddit.com', 'www.reddit.com') : '';
 
     // 3. ID
     const idMatch = entryText.match(/<id>([^<]+)<\/id>/);
@@ -196,7 +196,7 @@ function parseRedditRssXml(xmlText: string): RedditPost[] {
 
     // Target giveaway link
     const giveawayLinkMatch = unescapedContent.match(/href="([^"]+)"[^>]*>\[link\]/);
-    const giveawayUrl = giveawayLinkMatch ? giveawayLinkMatch[1] : permalink;
+    const giveawayUrl = giveawayLinkMatch ? giveawayLinkMatch[1].replace('old.reddit.com', 'www.reddit.com') : permalink;
 
     // Extract selftext from <div class="md">
     let selftext = '';
