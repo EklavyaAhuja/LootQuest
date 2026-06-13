@@ -5,7 +5,7 @@ import BouncyPressable from '../components/BouncyPressable';
 import { User, Clock } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
-import Svg, { Circle, Line, Path, Defs, LinearGradient, Stop, Filter, GaussianBlur } from 'react-native-svg';
+import Svg, { Circle, Line, Path, Defs, LinearGradient, Stop, Filter, FeGaussianBlur } from 'react-native-svg';
 
 interface AlertItem {
   id: string;
@@ -64,7 +64,7 @@ const RadarAnimation = () => {
           <Defs>
             {/* Blur filter to make the seagreen light spread out and glow */}
             <Filter id="radarGlow" x="-20%" y="-20%" width="140%" height="140%">
-              <GaussianBlur stdDeviation="6" />
+              <FeGaussianBlur stdDeviation="6" />
             </Filter>
             {/* Symmetrical gradient from left edge to center to right edge */}
             <LinearGradient id="sweepGrad" x1="0" y1="0" x2="1" y2="0">
