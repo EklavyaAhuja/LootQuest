@@ -30,47 +30,19 @@ const COVER_IMAGES = [
 
 const RadarAnimation = () => {
   const rotateAnim = useRef(new Animated.Value(0)).current;
-  const flyAnim = useRef(new Animated.Value(0)).current;
-  const blinkAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // Rotation loop
+    // Continuous 360-degree rotation loop (3 seconds duration, constant angular velocity)
     const rotateAnimation = Animated.loop(
       Animated.timing(rotateAnim, {
         toValue: 1,
-        duration: 2500,
+        duration: 3000,
         easing: Easing.linear,
         useNativeDriver: true,
       })
     );
-
-    // Target flight loop (32 seconds)
-    const flyAnimation = Animated.loop(
-      Animated.timing(flyAnim, {
-        toValue: 1,
-        duration: 32000,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      })
-    );
-
-    // Blinking glow loop (alternates every 1.6s)
-    const blinkAnimation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(blinkAnim, { toValue: 1, duration: 1600, easing: Easing.ease, useNativeDriver: true }),
-        Animated.timing(blinkAnim, { toValue: 0, duration: 1600, easing: Easing.ease, useNativeDriver: true }),
-      ])
-    );
-
     rotateAnimation.start();
-    flyAnimation.start();
-    blinkAnimation.start();
-
-    return () => {
-      rotateAnimation.stop();
-      flyAnimation.stop();
-      blinkAnimation.stop();
-    };
+    return () => rotateAnimation.stop();
   }, []);
 
   const rotate = rotateAnim.interpolate({
@@ -78,73 +50,141 @@ const RadarAnimation = () => {
     outputRange: ['0deg', '360deg'],
   });
 
-  const dotOpacity = blinkAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.25, 0.9],
-  });
+  // Interpolation helper for blip dots to simulate phosphor decay and scale up on sweep crossing
+  const getDotStyle = (p: number, x: number, y: number) => {
+    const peak = p;
+    const prePeak = (p - 0.02 + 1) % 1;
+    const postDecay = (p + 0.30) % 1; // 30% cycle fade decay
 
-  // Interpolated paths for fly animation (scaled 0.6x from 150px CSS grid to 90px SVG grid)
-  const dot1X = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [84, 12] });
-  const dot1Y = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [60, 78] });
+    const keyframes = [
+      { t: prePeak, opacity: 0.15, scale: 1.0 },
+      { t: peak, opacity: 1.0, scale: 2.2 },
+      { t: postDecay, opacity: 0.15, scale: 1.0 }
+    ];
 
-  const dot2X = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 54] });
-  const dot2Y = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [60, -2] });
+    keyframes.sort((a, b) => a.t - b.t);
 
-  const dot3X = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [63, 10.8] });
-  const dot3Y = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [60, 10.8] });
+    const interpolateValues = (t: number) => {
+      // Find interval
+      for (let i = 0; i < keyframes.length; i++) {
+        const k1 = keyframes[i];
+        const k2 = keyframes[(i + 1) % keyframes.length];
 
-  const dot4X = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [90, 18] });
-  const dot4Y = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [66, 84] });
+        if (k2.t > k1.t) {
+          if (t >= k1.t && t <= k2.t) {
+            const ratio = (t - k1.t) / (k2.t - k1.t);
+            return {
+              opacity: k1.opacity + ratio * (k2.opacity - k1.opacity),
+              scale: k1.scale + ratio * (k2.scale - k1.scale),
+            };
+          }
+        } else {
+          if (t >= k1.t || t <= k2.t) {
+            const dist = (k2.t - k1.t + 1) % 1;
+            const progress = (t - k1.t + 1) % 1;
+            const ratio = progress / dist;
+            return {
+              opacity: k1.opacity + ratio * (k2.opacity - k1.opacity),
+              scale: k1.scale + ratio * (k2.scale - k1.scale),
+            };
+          }
+        }
+      }
+      return { opacity: 0.15, scale: 1.0 };
+    };
 
-  const dot5X = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [51, 72] });
-  const dot5Y = flyAnim.interpolate({ inputRange: [0, 1], outputRange: [-3, 75] });
+    const valAt0 = interpolateValues(0);
+
+    const inputs: number[] = [0];
+    const opacities: number[] = [valAt0.opacity];
+    const scales: number[] = [valAt0.scale];
+
+    keyframes.forEach(k => {
+      if (k.t > 0.001 && k.t < 0.999) {
+        inputs.push(k.t);
+        opacities.push(k.opacity);
+        scales.push(k.scale);
+      }
+    });
+
+    inputs.push(1);
+    opacities.push(valAt0.opacity);
+    scales.push(valAt0.scale);
+
+    const dotOpacity = rotateAnim.interpolate({
+      inputRange: inputs,
+      outputRange: opacities,
+    });
+
+    const dotScale = rotateAnim.interpolate({
+      inputRange: inputs,
+      outputRange: scales,
+    });
+
+    return {
+      opacity: dotOpacity,
+      transform: [
+        { translateX: x - 2 },
+        { translateY: y - 2 },
+        { scale: dotScale }
+      ],
+    };
+  };
+
+  // Fixed stationary dot configurations (X, Y in 100x100 space, p is clockwise fraction from 12 o'clock)
+  const dot1Style = getDotStyle(0.1476, 70, 35);
+  const dot2Style = getDotStyle(0.8750, 30, 30);
+  const dot3Style = getDotStyle(0.6640, 25, 65);
+  const dot4Style = getDotStyle(0.3436, 80, 70);
+  const dot5Style = getDotStyle(0.4760, 55, 83);
 
   return (
     <View style={styles.radarWrapper}>
-      {/* Static Background Rings */}
-      <Svg width={90} height={90} style={StyleSheet.absoluteFill}>
+      {/* 1. Static Background Rings */}
+      <Svg width={100} height={100} style={StyleSheet.absoluteFill}>
         {/* Outer Ring */}
-        <Circle cx={45} cy={45} r={44} stroke="rgba(46, 139, 87, 0.45)" strokeWidth={1} fill="transparent" />
+        <Circle cx={50} cy={50} r={44} stroke="rgba(46, 139, 87, 0.25)" strokeWidth={1} fill="transparent" />
         {/* Middle Dashed Ring */}
-        <Circle cx={45} cy={45} r={32} stroke="rgba(46, 139, 87, 0.35)" strokeWidth={1} strokeDasharray="3, 3" fill="transparent" />
+        <Circle cx={50} cy={50} r={32} stroke="rgba(46, 139, 87, 0.2)" strokeWidth={1} strokeDasharray="3, 3" fill="transparent" />
       </Svg>
 
-      {/* Rotating Sweep */}
+      {/* 2. Center Circle Overlay (sits under rotating sweep, but above rings) */}
+      <Svg width={100} height={100} style={StyleSheet.absoluteFill}>
+        {/* Dark solid circle with stroke */}
+        <Circle cx={50} cy={50} r={18} fill={COLORS.surfaceCharcoal} stroke="rgba(46, 139, 87, 0.45)" strokeWidth={1} />
+        {/* Inner dashed ring */}
+        <Circle cx={50} cy={50} r={10} stroke="rgba(46, 139, 87, 0.3)" strokeWidth={1} strokeDasharray="2, 2" fill="transparent" />
+      </Svg>
+
+      {/* 3. Rotating Sweep (rendered on top of center circle overlay and rings) */}
       <Animated.View style={[styles.radarSweep, { transform: [{ rotate }] }]}>
-        <Svg width={90} height={90}>
+        <Svg width={100} height={100}>
           <Defs>
             {/* Blur filter to make the seagreen light spread out and glow */}
             <Filter id="radarGlow" x="-20%" y="-20%" width="140%" height="140%">
-              <FeGaussianBlur stdDeviation="3.5" />
+              <FeGaussianBlur stdDeviation="3" />
             </Filter>
-            {/* Symmetrical gradient from left edge to center to right edge */}
-            <LinearGradient id="sweepGrad" x1="0" y1="0" x2="1" y2="0">
-              <Stop offset="0%" stopColor="seagreen" stopOpacity="0.0" />
-              <Stop offset="50%" stopColor="seagreen" stopOpacity="0.75" />
-              <Stop offset="100%" stopColor="seagreen" stopOpacity="0.0" />
+            {/* Linear gradient going from leading edge (right) to trailing edge (left) */}
+            <LinearGradient id="sweepGrad" x1="1" y1="0" x2="0" y2="0">
+              <Stop offset="0%" stopColor="rgba(46, 139, 87, 0.85)" />
+              <Stop offset="100%" stopColor="rgba(46, 139, 87, 0.0)" />
             </LinearGradient>
           </Defs>
-          {/* Blurred seagreen 120-degree sector centered around the dashed line */}
-          <Path d="M 45 45 L 6.9 23 A 44 44 0 0 1 83.1 23 Z" fill="url(#sweepGrad)" filter="url(#radarGlow)" />
-          {/* Sharp dashed sweep line (white/light-grey) directly in the middle */}
-          <Line x1={45} y1={45} x2={45} y2={1} stroke="#ffffff" strokeWidth={1.2} strokeDasharray="2, 2" />
+          {/* Blurred seagreen 90-degree sector trailing behind */}
+          <Path d="M 50 50 L 50 6 A 44 44 0 0 0 6 50 Z" fill="url(#sweepGrad)" filter="url(#radarGlow)" />
+          {/* Sharp cyan glow along the leading edge */}
+          <Line x1={50} y1={50} x2={50} y2={6} stroke="#5de6ff" strokeWidth={1.2} opacity={0.6} />
+          {/* Sharp dashed sweep line (white) directly at the leading edge */}
+          <Line x1={50} y1={50} x2={50} y2={6} stroke="#ffffff" strokeWidth={1.5} strokeDasharray="3, 3" />
         </Svg>
       </Animated.View>
 
-      {/* Target Blip Dots */}
-      <Animated.View style={[styles.dot, { transform: [{ translateX: dot1X }, { translateY: dot1Y }], opacity: dotOpacity }]} />
-      <Animated.View style={[styles.dot, { transform: [{ translateX: dot2X }, { translateY: dot2Y }], opacity: dotOpacity }]} />
-      <Animated.View style={[styles.dot, { transform: [{ translateX: dot3X }, { translateY: dot3Y }], opacity: dotOpacity }]} />
-      <Animated.View style={[styles.dot, { transform: [{ translateX: dot4X }, { translateY: dot4Y }], opacity: dotOpacity }]} />
-      <Animated.View style={[styles.dot, { transform: [{ translateX: dot5X }, { translateY: dot5Y }], opacity: dotOpacity }]} />
-
-      {/* Center Circle Overlay (sits on top of the rotating sweep to cover the center) */}
-      <Svg width={90} height={90} style={StyleSheet.absoluteFill}>
-        {/* Dark solid circle with stroke */}
-        <Circle cx={45} cy={45} r={18} fill={COLORS.surfaceCharcoal} stroke="rgba(46, 139, 87, 0.45)" strokeWidth={1} />
-        {/* Inner dashed ring */}
-        <Circle cx={45} cy={45} r={10} stroke="rgba(46, 139, 87, 0.3)" strokeWidth={1} strokeDasharray="2, 2" fill="transparent" />
-      </Svg>
+      {/* 4. Target Blip Dots */}
+      <Animated.View style={[styles.dot, dot1Style]} />
+      <Animated.View style={[styles.dot, dot2Style]} />
+      <Animated.View style={[styles.dot, dot3Style]} />
+      <Animated.View style={[styles.dot, dot4Style]} />
+      <Animated.View style={[styles.dot, dot5Style]} />
     </View>
   );
 };
@@ -747,17 +787,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   radarWrapper: {
-    width: 90,
-    height: 90,
+    width: 100,
+    height: 100,
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 45,
+    borderRadius: 50,
     overflow: 'hidden',
   },
   radarSweep: {
-    width: 90,
-    height: 90,
+    width: 100,
+    height: 100,
     position: 'absolute',
     top: 0,
     left: 0,
