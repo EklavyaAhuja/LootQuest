@@ -126,6 +126,14 @@ Please include:
 
 ---
 
+## Community
+
+Have feedback, suggestions, or bug reports?
+
+Join the Discord server:
+
+[Discord Invite](https://discord.gg/pXxnhKWdGH)
+
 ## Disclaimer
 
 LootQuest does not host, distribute, or provide any games. All giveaways, game assets, trademarks, and store content belong to their respective owners.
