@@ -3,7 +3,13 @@
     "name": "LootQuest",
     "slug": "FreeGameFindings_App",
     "scheme": "lootquest",
-    "version": "1.1.0",
+    "version": "1.2.0",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/95a4c213-070b-4462-8489-b8d0c433e77b"
+    },
     "orientation": "portrait",
     "icon": "./assets/Icon_Latest.png",
     "userInterfaceStyle": "light",
@@ -45,7 +51,8 @@
             "./assets/long_expected.mp3"
           ]
         }
-      ]
+      ],
+      "@react-native-firebase/analytics"
     ],
     "extra": {
       "eas": {

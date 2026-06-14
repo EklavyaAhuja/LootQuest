@@ -9,8 +9,11 @@ import {
   Alert,
   Platform,
   TouchableOpacity,
+  Linking,
 } from 'react-native';
 import { COLORS, FONTS, getPlatformColor } from '../theme/theme';
+import appJson from '../../app.json';
+const appVersion = appJson.expo.version;
 import {
   getAppSettings,
   saveAppSettings,
@@ -119,6 +122,7 @@ export default function SettingsScreen() {
             fields: [
               { name: '💬 Feedback', value: text },
               { name: '📱 Client', value: `${Platform.OS.toUpperCase()} (v${Platform.Version})` },
+              { name: '📦 App Version', value: appVersion },
             ],
             timestamp: new Date().toISOString(),
           }],
@@ -132,6 +136,24 @@ export default function SettingsScreen() {
       }
     } catch (e) {
       Alert.alert('Failed ❌', 'Could not send feedback. Check your connection.');
+    }
+  };
+
+  const handleJoinDiscord = async () => {
+    const url = 'https://discord.gg/pXxnhKWdGH';
+    try {
+      await Linking.openURL(url);
+    } catch (e) {
+      Alert.alert('Error', 'Failed to open Discord link.');
+    }
+  };
+
+  const handleOpenGamerPower = async () => {
+    const url = 'https://www.gamerpower.com';
+    try {
+      await Linking.openURL(url);
+    } catch (e) {
+      Alert.alert('Error', 'Failed to open GamerPower link.');
     }
   };
 
@@ -272,6 +294,23 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* ── Community Card ── */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={[styles.headerIconCircle, { borderColor: COLORS.secondary }]}>
+            <MessageCircle size={15} color={COLORS.secondary} />
+          </View>
+          <Text style={styles.cardTitle}>Community</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.discordBtn}
+          onPress={handleJoinDiscord}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.discordText}>Join Discord Server</Text>
+        </TouchableOpacity>
+      </View>
+
       {/* ── Developer's Note Card ── */}
       <View style={styles.card}>
         <View style={styles.cardHeader}>
@@ -304,7 +343,10 @@ export default function SettingsScreen() {
       {/* ── Version Footer ── */}
       <View style={styles.versionFooter}>
         <Text style={styles.versionAppName}>LOOTQUEST</Text>
-        <Text style={styles.versionText}>Version 1.1.0 (Beta)</Text>
+        <Text style={styles.versionText}>{`Version ${appVersion} (Beta)`}</Text>
+        <Text style={styles.attributionText} onPress={handleOpenGamerPower}>
+          Data provided by <Text style={styles.hyperlink}>GamerPower.com</Text>
+        </Text>
       </View>
 
     </ScrollView>
@@ -516,5 +558,35 @@ const styles = StyleSheet.create({
   highlightedNameTextOnly: {
     fontFamily: FONTS.bold,
     color: '#39ff14', // Neon green highlight
+  },
+  discordBtn: {
+    marginHorizontal: 16,
+    marginVertical: 14,
+    borderRadius: 24,
+    backgroundColor: '#5865F2', // Discord Purple-Blue
+    paddingVertical: 13,
+    alignItems: 'center',
+    shadowColor: '#5865F2',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  discordText: {
+    fontFamily: FONTS.bold,
+    fontSize: 15,
+    color: '#ffffff',
+    letterSpacing: 0.2,
+  },
+  attributionText: {
+    fontFamily: FONTS.medium,
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  hyperlink: {
+    color: COLORS.primary,
+    textDecorationLine: 'underline',
   },
 });

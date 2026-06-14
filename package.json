@@ -1,6 +1,6 @@
 {
   "name": "freegamefindings_app",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "main": "index.ts",
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",
@@ -9,6 +9,7 @@
     "@expo-google-fonts/quicksand": "^0.4.1",
     "@expo-google-fonts/space-mono": "^0.4.2",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-firebase/analytics": "^24.1.1",
     "@react-native-firebase/app": "^24.1.1",
     "@react-native-firebase/messaging": "^24.1.1",
     "expo": "~54.0.3",
@@ -20,6 +21,7 @@
     "expo-secure-store": "~15.0.8",
     "expo-status-bar": "~3.0.9",
     "expo-task-manager": "~14.0.9",
+    "expo-updates": "~29.0.18",
     "expo-web-browser": "~15.0.11",
     "lucide-react-native": "^1.17.0",
     "react": "19.1.0",

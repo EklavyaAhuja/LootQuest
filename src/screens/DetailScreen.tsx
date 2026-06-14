@@ -27,7 +27,7 @@ import { fetchImageFromUrl } from '../utils/imageResolver';
 import { COLORS, FONTS } from '../theme/theme';
 import BouncyPressable from '../components/BouncyPressable';
 import * as WebBrowser from 'expo-web-browser';
-import { isDealClaimed, getTimeLeft, resolveGamerPowerRedirect } from '../utils/dealUtils';
+import { isDealClaimed, getTimeLeft, resolveGamerPowerRedirect, parseDateToMs, determineClaimMethod } from '../utils/dealUtils';
 import Svg, { Path } from 'react-native-svg';
 import StoreIcon from '../components/StoreIcon';
 import {
@@ -109,7 +109,7 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
     const checkExpiry = () => {
       const end = localDeal.expiresAt || localDeal.endDate;
       if (end && end.toUpperCase() !== 'N/A') {
-        const endTime = new Date(end).getTime();
+        const endTime = parseDateToMs(end);
         setIsExpired(endTime < Date.now());
       } else {
         setIsExpired(localDeal.isExpired || localDeal.expiryStatus === 'EXPIRED');
@@ -173,12 +173,24 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
           if (active) {
             const isExpiredFromFlair = expiredFeedService.isExpired(deal.id);
             const isTaskFromFlair = tasksFeedService.isTask(deal.id);
+            const finalUrl = deal.url || cached.url;
+            const claimMethod = isTaskFromFlair 
+              ? 'tasks' 
+              : determineClaimMethod(
+                  deal.instructions || cached.instructions || '',
+                  deal.title,
+                  deal.platform,
+                  finalUrl
+                );
             const cachedMerged = {
-              ...deal,
               ...cached,
+              ...deal,
+              // Prioritize fresh feed values for counters
+              claimedUsers: deal.claimedUsers ?? cached.claimedUsers,
+              worth: deal.worth ?? cached.worth,
               platform: deal.platform,
               expiryStatus: isExpiredFromFlair ? 'EXPIRED' : cached.expiryStatus,
-              claimMethod: isTaskFromFlair ? 'tasks' : (cached.claimMethod || deal.claimMethod)
+              claimMethod
             };
             cachedMerged.timeLeft = getTimeLeft(cachedMerged.expiresAt || cachedMerged.endDate);
             setLocalDeal(cachedMerged);
@@ -240,13 +252,18 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               resolvedImage = await fetchImageFromUrl(resolvedUrl, deal.title);
             }
 
+            const finalUrl = epicData?.url || parsed.storeUrl || resolvedUrl;
+            const finalInstructions = parsed.instructions || undefined;
+            const claimMethod = isTaskFromFlair 
+              ? 'tasks' 
+              : determineClaimMethod(finalInstructions || '', deal.title, deal.platform, finalUrl);
             const enriched: Deal = {
               ...deal,
               originalPrice: parsed.originalPrice || undefined,
               currentPrice: parsed.price || undefined,
               expiresAt: finalExpiresAt,
               expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
-              claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
+              claimMethod,
               developer: steamData?.developer || epicData?.developer || parsed.developer || deal.developer,
               releaseDate: steamData?.releaseDate || parsed.releaseDate || deal.releaseDate || undefined,
               genres: steamData?.genres || (parsed.genres.length > 0 ? parsed.genres : (deal.genres || undefined)),
@@ -255,10 +272,10 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               reviewScore: parsed.reviewScore || deal.reviewScore || undefined,
               steamDbRating: parsed.steamDbRating || deal.steamDbRating || undefined,
               aboutGame: steamData?.description || epicData?.description || parsed.aboutGame || deal.aboutGame,
-              instructions: parsed.instructions || undefined,
+              instructions: finalInstructions,
               parserConfidence: parsed.parserConfidence,
               image: resolvedImage,
-              url: epicData?.url || parsed.storeUrl || resolvedUrl,
+              url: finalUrl,
               timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
             };
 
@@ -279,17 +296,21 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
               resolvedImage = await fetchImageFromUrl(resolvedUrl, deal.title);
             }
 
+            const finalUrl = epicData?.url || resolvedUrl;
+            const claimMethod = isTaskFromFlair
+              ? 'tasks'
+              : determineClaimMethod(deal.instructions || '', deal.title, deal.platform, finalUrl);
             const enriched: Deal = {
               ...deal,
               expiresAt: finalExpiresAt,
               expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
-              claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
+              claimMethod,
               developer: steamData?.developer || epicData?.developer || deal.developer,
               aboutGame: steamData?.description || epicData?.description || deal.aboutGame,
               image: resolvedImage,
               genres: steamData?.genres || deal.genres,
               releaseDate: steamData?.releaseDate || deal.releaseDate,
-              url: epicData?.url || resolvedUrl,
+              url: finalUrl,
               timeLeft: getTimeLeft(finalExpiresAt || deal.endDate),
             };
             await saveCachedDeal(deal.id, enriched, '');
@@ -374,15 +395,15 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
   const getCompactExpiryDate = (isoString?: string | null) => {
     if (!isoString) return '';
     try {
-      const d = new Date(isoString);
+      const d = new Date(parseDateToMs(isoString));
       if (isNaN(d.getTime())) return '';
       const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-      const month = months[d.getUTCMonth()];
-      const day = d.getUTCDate();
+      const month = months[d.getMonth()];
+      const day = d.getDate();
       const pad = (n: number) => n.toString().padStart(2, '0');
-      const hours = pad(d.getUTCHours());
-      const minutes = pad(d.getUTCMinutes());
-      return `${month} ${day}, ${hours}:${minutes} UTC`;
+      const hours = pad(d.getHours());
+      const minutes = pad(d.getMinutes());
+      return `${month} ${day}, ${hours}:${minutes}`;
     } catch {
       return '';
     }
@@ -391,18 +412,16 @@ export default function DetailScreen({ deal, onClose }: DetailScreenProps) {
   const formatExpiryDate = (isoString?: string) => {
     if (!isoString) return '';
     try {
-      const d = new Date(isoString);
+      const d = new Date(parseDateToMs(isoString));
       if (isNaN(d.getTime())) return '';
-      const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-      const month = months[d.getUTCMonth()];
-      const day = d.getUTCDate();
-      const year = d.getUTCFullYear();
-      
-      const pad = (n: number) => n.toString().padStart(2, '0');
-      const hours = pad(d.getUTCHours());
-      const minutes = pad(d.getUTCMinutes());
-      
-      return `${month} ${day}, ${year} at ${hours}:${minutes} UTC`;
+      return d.toLocaleString([], {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
     } catch {
       return '';
     }

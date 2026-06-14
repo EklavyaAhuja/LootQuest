@@ -5,11 +5,11 @@ import { tasksFeedService } from './TasksFeedService';
 import { parseExpiryFromPostBody, getExpiryStatus, checkIsFullyFree } from './FGFBotParser';
 import { isDealExpired, getTimeLeft, determineClaimMethod, getCleanPlatform } from '../utils/dealUtils';
 
-export function classifyDeal(title: string, description: string, platform?: string): {
+export function classifyDeal(title: string, description: string, platform?: string, url?: string): {
   type: Deal['type'];
   claimMethod: Deal['claimMethod'];
 } {
-  const text = `${title} ${description}`.toLowerCase();
+  const text = `${title} ${description} ${url || ''}`.toLowerCase();
   const plat = (platform || '').toLowerCase();
 
   // 1. Detect Type
@@ -41,7 +41,7 @@ export function classifyDeal(title: string, description: string, platform?: stri
   }
 
   // 2. Detect Claim Method
-  const claimMethod = determineClaimMethod(description, title, platform);
+  const claimMethod = determineClaimMethod(description, title, platform, url);
   
   return { type, claimMethod };
 }
@@ -56,7 +56,7 @@ export function postToBasicDeal(post: RedditPost): Deal {
   const platform = post.platform || anyPost.platform || '';
   const url = post.url || anyPost.url || '';
   
-  const { type, claimMethod } = classifyDeal(title, selftext, platform);
+  const { type, claimMethod } = classifyDeal(title, selftext, platform, url);
   const isExpiredFromFlair = expiredFeedService.isExpired(post.id);
   const isTaskFromFlair = tasksFeedService.isTask(post.id);
   const isFree = checkIsFullyFree(title, selftext);
@@ -67,7 +67,7 @@ export function postToBasicDeal(post: RedditPost): Deal {
     title: post.cleanTitle || title,
     platform: getCleanPlatform(platform, title, selftext, url),
     type,
-    claimMethod: isTaskFromFlair ? 'tasks' : claimMethod,
+    claimMethod: (isTaskFromFlair || post.isTask) ? 'tasks' : claimMethod,
     image: post.coverImage || anyPost.image,
     url: url,
     author: post.author || anyPost.author,

@@ -8,14 +8,43 @@ export function parseDateToMs(dateStr?: string | null): number {
     return Date.now();
   }
   try {
-    const t = Date.parse(dateStr);
+    let normalized = dateStr.trim();
+    
+    // Check if the date string is a placeholder (ending in 23:59:00, 23:59:59, or 00:00:00)
+    // We match this regardless of whether there is an offset/timezone suffix at the end (like Z or +00:00)
+    const isPlaceholder = /[\sT](?:23:59:00|23:59:59|00:00:00)/.test(normalized);
+    
+    if (isPlaceholder) {
+      const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})[\sT](\d{2}):(\d{2}):(\d{2})/);
+      if (match) {
+        const year = parseInt(match[1], 10);
+        const month = parseInt(match[2], 10) - 1;
+        const day = parseInt(match[3], 10);
+        const hour = parseInt(match[4], 10);
+        const minute = parseInt(match[5], 10);
+        const second = parseInt(match[6], 10);
+        const localTime = new Date(year, month, day, hour, minute, second).getTime();
+        if (!isNaN(localTime)) return localTime;
+      }
+    }
+
+    // Force UTC timezone for date-times lacking offset suffixes (skip for placeholders)
+    if (!isPlaceholder) {
+      if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/.test(normalized)) {
+        normalized = normalized.replace(' ', 'T') + 'Z';
+      } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(normalized)) {
+        normalized = normalized + 'Z';
+      }
+    }
+
+    const t = Date.parse(normalized);
     if (!isNaN(t)) return t;
 
-    const withT = dateStr.replace(' ', 'T');
+    const withT = normalized.replace(' ', 'T');
     const t2 = Date.parse(withT);
     if (!isNaN(t2)) return t2;
 
-    const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
+    const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
     if (match) {
       const year = parseInt(match[1], 10);
       const month = parseInt(match[2], 10) - 1;
@@ -75,14 +104,20 @@ export const getTimeLeft = (endDate: string | null | undefined): string => {
 export function determineClaimMethod(
   instructions: string = "",
   title: string = "",
-  platforms: string = ""
+  platforms: string = "",
+  url: string = ""
 ): "one_click" | "tasks" | "unknown" {
-  const text = (instructions + " " + title + " " + platforms).toLowerCase();
+  const lowerUrl = url.toLowerCase();
+  const text = (instructions + " " + title + " " + platforms + " " + url).toLowerCase();
+
+  // IndieGala is always one_click as requested
+  if (lowerUrl.includes("indiegala.com") || text.includes("indiegala")) {
+    return "one_click";
+  }
 
   // Task hosts that always require external steps
   const taskHosts = [
     "alienware",
-    "indiegala giveaway",  // IndieGala giveaway contests, NOT their store
     "gleam",
     "givee.club",
     "keylol",
@@ -126,18 +161,41 @@ export function determineClaimMethod(
     return "tasks";
   }
 
-  // Everything else (log in, click claim, add to library) = one_click
-  if (!instructions || instructions.trim() === "") {
-    const lowerPlatforms = platforms.toLowerCase();
-    const directStorefronts = ["steam", "epic", "gog", "itch", "nintendo", "playstation", "xbox", "stove"];
-    const isDirectStorefront = directStorefronts.some(store => lowerPlatforms.includes(store));
-    if (isDirectStorefront) {
-      return "one_click";
+  // Check if it matches popular direct storefronts / consoles / platforms (excluding generic "pc")
+  const lowerPlat = platforms.toLowerCase();
+  const directStorefronts = [
+    "steam",
+    "epic",
+    "gog",
+    "itch",
+    "nintendo",
+    "switch",
+    "playstation",
+    "ps4",
+    "ps5",
+    "psn",
+    "psa",
+    "xbox",
+    "stove",
+    "mobile",
+    "android",
+    "ios",
+    ""
+  ];
+
+  const isDirectStore = directStorefronts.some(store => {
+    if (store === "") {
+      return lowerPlat.trim() === "";
     }
-    return "unknown";
+    return lowerPlat.includes(store);
+  });
+
+  if (isDirectStore) {
+    return "one_click";
   }
 
-  return "one_click";
+  // If it is not on a direct storefront/platform, assume it's tasks
+  return "tasks";
 }
 
 /**

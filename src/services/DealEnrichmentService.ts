@@ -7,7 +7,7 @@ import { tasksFeedService } from './TasksFeedService';
 import { enrichEpicDeal } from './EpicGamesEnricher';
 import { enrichSteamDeal } from './SteamGamesEnricher';
 import { fetchImageFromUrl } from '../utils/imageResolver';
-import { getTimeLeft, resolveGamerPowerRedirect } from '../utils/dealUtils';
+import { getTimeLeft, resolveGamerPowerRedirect, determineClaimMethod } from '../utils/dealUtils';
 
 const MAX_CONCURRENT_ENRICHMENTS = 3;
 
@@ -74,7 +74,14 @@ class DealEnrichmentService {
         ...cached,
         platform: deal.platform,
         expiryStatus: isExpiredFromFlair ? 'EXPIRED' : cached.expiryStatus,
-        claimMethod: isTaskFromFlair ? 'tasks' : (cached.claimMethod || deal.claimMethod),
+        claimMethod: isTaskFromFlair
+          ? 'tasks'
+          : determineClaimMethod(
+              cached.instructions || deal.instructions || '',
+              deal.title,
+              deal.platform,
+              cached.url || deal.url
+            ),
         // Always prefer live API values for mutable counters/dates so stale
         // DealCache (24 h TTL) never buries fresher GamerPower data.
         claimedUsers: deal.claimedUsers ?? cached.claimedUsers,
@@ -144,7 +151,14 @@ class DealEnrichmentService {
           currentPrice: parsed.price || deal.currentPrice,
           expiresAt: finalExpiresAt,
           expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
-          claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
+          claimMethod: isTaskFromFlair
+            ? 'tasks'
+            : determineClaimMethod(
+                parsed.instructions || deal.instructions || '',
+                deal.title,
+                deal.platform,
+                epicData?.url || parsed.storeUrl || resolvedUrl
+              ),
           developer: steamData?.developer || epicData?.developer || parsed.developer || deal.developer,
           aboutGame: steamData?.description || epicData?.description || parsed.aboutGame || deal.aboutGame,
           instructions: parsed.instructions || deal.instructions,
@@ -180,7 +194,14 @@ class DealEnrichmentService {
             ...deal,
             expiresAt: finalExpiresAt,
             expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
-            claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
+            claimMethod: isTaskFromFlair
+              ? 'tasks'
+              : determineClaimMethod(
+                  deal.instructions || '',
+                  deal.title,
+                  deal.platform,
+                  epicData.url || deal.url
+                ),
             developer: epicData.developer || deal.developer,
             aboutGame: epicData.description || deal.aboutGame,
             image: epicData.image || deal.image || 'placeholder',
@@ -208,7 +229,14 @@ class DealEnrichmentService {
           const enriched: Deal = {
             ...deal,
             expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (deal.expiresAt ? getExpiryStatus(deal.expiresAt) : (deal.expiryStatus || 'UNKNOWN')),
-            claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
+            claimMethod: isTaskFromFlair
+              ? 'tasks'
+              : determineClaimMethod(
+                  deal.instructions || '',
+                  deal.title,
+                  deal.platform,
+                  deal.url
+                ),
             developer: steamData.developer || deal.developer,
             aboutGame: steamData.description || deal.aboutGame,
             image: steamData.image || deal.image || 'placeholder',
@@ -299,7 +327,14 @@ class DealEnrichmentService {
         currentPrice: parsed.price || undefined,
         expiresAt: finalExpiresAt,
         expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
-        claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
+        claimMethod: isTaskFromFlair
+          ? 'tasks'
+          : determineClaimMethod(
+              parsed.instructions || undefined,
+              deal.title,
+              deal.platform,
+              epicData?.url || parsed.storeUrl || resolvedUrl
+            ),
         developer: steamData?.developer || epicData?.developer || parsed.developer || deal.developer,
         releaseDate: steamData?.releaseDate || parsed.releaseDate || deal.releaseDate || undefined,
         genres: steamData?.genres || (parsed.genres.length > 0 ? parsed.genres : (deal.genres || undefined)),
@@ -335,7 +370,14 @@ class DealEnrichmentService {
         ...deal,
         expiresAt: finalExpiresAt,
         expiryStatus: isExpiredFromFlair ? 'EXPIRED' : (finalExpiresAt ? getExpiryStatus(finalExpiresAt) : (deal.expiryStatus || 'UNKNOWN')),
-        claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
+        claimMethod: isTaskFromFlair
+          ? 'tasks'
+          : determineClaimMethod(
+              deal.instructions || '',
+              deal.title,
+              deal.platform,
+              epicData?.url || resolvedUrl
+            ),
         developer: steamData?.developer || epicData?.developer || deal.developer,
         aboutGame: steamData?.description || epicData?.description || deal.aboutGame,
         image: resolvedImage || 'placeholder',

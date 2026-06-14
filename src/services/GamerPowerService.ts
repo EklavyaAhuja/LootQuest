@@ -24,7 +24,12 @@ function parseGamerPowerDate(dateStr?: string): string | null {
   }
   try {
     const cleanStr = dateStr.replace(' ', 'T');
-    const d = new Date(cleanStr);
+    const isPlaceholder = /(?:23:59:00|23:59:59|00:00:00)$/.test(dateStr);
+    if (isPlaceholder) {
+      return cleanStr;
+    }
+    const cleanStrWithZ = cleanStr + 'Z';
+    const d = new Date(cleanStrWithZ);
     return isNaN(d.getTime()) ? null : d.toISOString();
   } catch {
     return null;
@@ -102,7 +107,7 @@ export async function fetchGamerPowerGiveaways(
     const platformString = getCleanPlatform(rawPlats, item.title || '', item.instructions || '', giveawayUrl);
 
     // Smart Type Classification
-    const classification = classifyDeal(item.title, item.description || '', platformString);
+    const classification = classifyDeal(item.title, item.description || '', platformString, giveawayUrl);
     let finalType: Deal['type'] = 'full_game';
 
     // Map GamerPower native type to our enum
@@ -119,7 +124,7 @@ export async function fetchGamerPowerGiveaways(
       finalType = 'full_game';
     }
 
-    const claimMethod = determineClaimMethod(item.instructions || '', item.title || '', platformString);
+    const claimMethod = determineClaimMethod(item.instructions || '', item.title || '', platformString, giveawayUrl);
 
     // End Date parsing with fallback logic
     const expiresAt = parseGamerPowerDate(item.end_date) || undefined;

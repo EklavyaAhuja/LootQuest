@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, SafeAreaView, Platform, Modal, Pressable } from 'react-native';
+import { StyleSheet, Text, View, SafeAreaView, Platform, Modal, Pressable, Linking } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import * as Notifications from 'expo-notifications';
@@ -21,8 +21,25 @@ import {
   registerFCMToken,
 } from './src/services/notificationService';
 import { expiredFeedService } from './src/services/ExpiredFeedService';
-import { Home, Inbox, Bell, User, Settings, Gamepad2, WifiOff } from 'lucide-react-native';
+import { Home, Inbox, Bell, User, Settings, Gamepad2, WifiOff, Sparkles, AlertTriangle } from 'lucide-react-native';
 import HourglassLoader from './src/components/HourglassLoader';
+import * as Updates from 'expo-updates';
+import analytics from '@react-native-firebase/analytics';
+import appJson from './app.json';
+
+// Helper to compare two semantic version strings
+function isVersionOlder(current: string, required: string): boolean {
+  const currentParts = current.split('.').map(Number);
+  const requiredParts = required.split('.').map(Number);
+
+  for (let i = 0; i < Math.max(currentParts.length, requiredParts.length); i++) {
+    const currentVal = currentParts[i] || 0;
+    const requiredVal = requiredParts[i] || 0;
+    if (currentVal < requiredVal) return true;
+    if (currentVal > requiredVal) return false;
+  }
+  return false;
+}
 
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -35,12 +52,27 @@ export default function App() {
     SpaceMono_700Bold: require('@expo-google-fonts/space-mono/700Bold/SpaceMono_700Bold.ttf'),
   });
 
+  const { currentlyRunning, isUpdateAvailable, isUpdatePending } = Updates.useUpdates();
+
+  const handleReloadApp = async () => {
+    try {
+      await Updates.reloadAsync();
+    } catch (e) {
+      console.error('Failed to reload update:', e);
+    }
+  };
+
   const [activeTab, setActiveTab] = useState<'feed' | 'vault' | 'alerts' | 'settings'>('feed');
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
   const [claimedDeals, setClaimedDeals] = useState<Deal[]>([]);
   const [unreadAlertsCount, setUnreadAlertsCount] = useState<number>(0);
   const [isOffline, setIsOffline] = useState<boolean>(false);
   const [retrying, setRetrying] = useState<boolean>(false);
+
+  // Force Update state
+  const [showForceUpdateModal, setShowForceUpdateModal] = useState<boolean>(false);
+  const [minRequiredVersion, setMinRequiredVersion] = useState<string>('1.2.0');
+  const [downloadUrl, setDownloadUrl] = useState<string>('https://github.com/EklavyaAhuja/LootQuest/releases/latest');
 
   const checkConnection = async () => {
     try {
@@ -63,6 +95,53 @@ export default function App() {
     setRetrying(false);
   };
 
+  const checkForceUpdate = async () => {
+    console.log('[ForceUpdate] Running version check against remote JSON...');
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const response = await fetch(
+        `https://raw.githubusercontent.com/EklavyaAhuja/LootQuest/main/version.json?t=${Date.now()}`,
+        {
+          signal: controller.signal,
+          headers: { 'Cache-Control': 'no-cache' }
+        }
+      );
+      
+      clearTimeout(timeoutId);
+      
+      if (response.ok) {
+        const data = await response.json();
+        const currentVersion = appJson.expo.version;
+        const minRequired = data.minRequiredVersion;
+        
+        if (minRequired && isVersionOlder(currentVersion, minRequired)) {
+          console.log(`[ForceUpdate] Current version ${currentVersion} is older than min required ${minRequired}. Blocking app.`);
+          if (data.downloadUrl) {
+            setDownloadUrl(data.downloadUrl);
+          }
+          setMinRequiredVersion(minRequired);
+          setShowForceUpdateModal(true);
+        } else {
+          console.log(`[ForceUpdate] Version check passed: current ${currentVersion}, required ${minRequired}`);
+        }
+      } else {
+        console.warn(`[ForceUpdate] Failed to fetch version.json. Status: ${response.status}. Failing open.`);
+      }
+    } catch (error) {
+      console.warn('[ForceUpdate] Error fetching remote version config (failing open):', error);
+    }
+  };
+
+  const handleDownloadUpdate = async () => {
+    try {
+      await Linking.openURL(downloadUrl);
+    } catch (e) {
+      console.error('Failed to open download URL:', e);
+    }
+  };
+
   const loadClaimedPosts = async () => {
     try {
       const claimed = await getClaimedPosts();
@@ -81,6 +160,17 @@ export default function App() {
     const initApp = async () => {
       // Check network connection first
       await checkConnection();
+
+      // Check for force update (fails open if offline/timeout)
+      await checkForceUpdate();
+
+      // Log App Open event in Firebase Analytics
+      try {
+        await analytics().logAppOpen();
+        console.log('[Analytics] App open logged successfully');
+      } catch (analyticsError) {
+        console.warn('[Analytics] Error logging app open:', analyticsError);
+      }
 
       // Initialize expired posts service first
       await expiredFeedService.initialize();
@@ -174,6 +264,26 @@ export default function App() {
           <Settings size={26} color={COLORS.text} />
         </Pressable>
       </View>
+
+      {/* Update Banner */}
+      {isUpdatePending && (
+        <View style={styles.updateBanner}>
+          <View style={styles.updateBannerLeft}>
+            <Sparkles size={20} color={COLORS.primary} />
+            <Text style={styles.updateBannerText}>New update is ready!</Text>
+          </View>
+          <BouncyPressable
+            onPress={handleReloadApp}
+            backgroundColor={COLORS.primary}
+            borderRadius={8}
+            shadowOffsetSize={0}
+            style={styles.updateBtn}
+            contentStyle={styles.updateBtnContent}
+          >
+            <Text style={styles.updateBtnText}>RESTART</Text>
+          </BouncyPressable>
+        </View>
+      )}
 
       {/* Main Content Screens Switcher */}
       <View style={styles.content}>
@@ -283,6 +393,52 @@ export default function App() {
             >
               <Text style={styles.retryBtnText}>
                 {retrying ? 'CHECKING...' : 'RETRY CONNECTION'}
+              </Text>
+            </BouncyPressable>
+          </View>
+        </View>
+      )}
+
+      {/* Force Update Overlay UI */}
+      {showForceUpdateModal && (
+        <View style={styles.forceUpdateOverlay}>
+          <View style={styles.forceUpdateCard}>
+            <View style={styles.warningIconWrapper}>
+              <AlertTriangle size={40} color={COLORS.warning} />
+            </View>
+            <Text style={styles.forceUpdateTitle}>UPDATE REQUIRED</Text>
+            <Text style={styles.forceUpdateDescription}>
+              {isUpdatePending 
+                ? 'An over-the-air update is ready to install. Please restart the app to apply it.'
+                : `A mandatory update (v${minRequiredVersion} or newer) is required to continue using LootQuest. Please download and install the latest version.`
+              }
+            </Text>
+            
+            {isUpdatePending && (
+              <BouncyPressable
+                onPress={handleReloadApp}
+                backgroundColor={COLORS.success}
+                borderRadius={12}
+                shadowOffsetSize={0}
+                style={[styles.downloadBtn, { marginBottom: 12 }]}
+                contentStyle={styles.downloadBtnContent}
+              >
+                <Text style={[styles.downloadBtnText, { color: '#0b101e' }]}>
+                  RESTART & APPLY
+                </Text>
+              </BouncyPressable>
+            )}
+
+            <BouncyPressable
+              onPress={handleDownloadUpdate}
+              backgroundColor={COLORS.primary}
+              borderRadius={12}
+              shadowOffsetSize={0}
+              style={styles.downloadBtn}
+              contentStyle={styles.downloadBtnContent}
+            >
+              <Text style={styles.downloadBtnText}>
+                UPDATE NOW
               </Text>
             </BouncyPressable>
           </View>
@@ -479,6 +635,109 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   retryBtnText: {
+    fontFamily: FONTS.bold,
+    fontSize: 15,
+    color: '#0b101e',
+    letterSpacing: 0.5,
+  },
+  updateBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.surfaceLow,
+    borderBottomWidth: 2,
+    borderBottomColor: COLORS.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  updateBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 12,
+  },
+  updateBannerText: {
+    fontFamily: FONTS.headlineMedium,
+    fontSize: 14,
+    color: COLORS.text,
+    marginLeft: 8,
+  },
+  updateBtn: {
+    height: 36,
+    paddingHorizontal: 16,
+  },
+  updateBtnContent: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: 36,
+    borderRadius: 8,
+  },
+  updateBtnText: {
+    fontFamily: FONTS.mono,
+    fontSize: 12,
+    color: '#0b101e',
+  },
+  forceUpdateOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(11, 16, 30, 0.94)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    zIndex: 99999,
+  },
+  forceUpdateCard: {
+    backgroundColor: COLORS.white,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 340,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  warningIconWrapper: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: 'rgba(255, 36, 73, 0.1)',
+    borderWidth: 1.5,
+    borderColor: COLORS.warning,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  forceUpdateTitle: {
+    fontFamily: FONTS.bold,
+    fontSize: 20,
+    color: COLORS.text,
+    textAlign: 'center',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+  forceUpdateDescription: {
+    fontFamily: FONTS.medium,
+    fontSize: 14,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+    lineHeight: 21,
+    marginBottom: 24,
+  },
+  downloadBtn: {
+    width: '100%',
+    height: 48,
+  },
+  downloadBtnContent: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: 48,
+    borderRadius: 12,
+  },
+  downloadBtnText: {
     fontFamily: FONTS.bold,
     fontSize: 15,
     color: '#0b101e',

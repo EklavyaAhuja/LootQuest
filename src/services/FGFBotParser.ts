@@ -1,4 +1,5 @@
 import { Deal } from '../models/Deal';
+import { parseDateToMs } from '../utils/dealUtils';
 
 export interface ParsedBotData {
   title: string | null;
@@ -581,7 +582,7 @@ export function getExpiryStatus(expiresAt?: string): Deal['expiryStatus'] {
   if (!expiresAt) return 'UNKNOWN';
 
   try {
-    const expiryTime = new Date(expiresAt).getTime();
+    const expiryTime = parseDateToMs(expiresAt);
     if (isNaN(expiryTime)) return 'UNKNOWN';
 
     const timeDiff = expiryTime - Date.now();
