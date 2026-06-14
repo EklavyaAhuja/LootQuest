@@ -1,0 +1,5 @@
+{
+  "_warning": "⚠️ DANGER: DO NOT bump minRequiredVersion beyond the latest compiled and published APK version on GitHub! Doing so will instantly lock out all older active installations of the app.",
+  "minRequiredVersion": "2.0.0",
+  "downloadUrl": "https://github.com/EklavyaAhuja/LootQuest/releases/latest"
+}
