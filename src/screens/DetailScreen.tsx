@@ -740,7 +740,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   scrollContent: {
-    paddingBottom: 140,
+    paddingBottom: Platform.OS === 'android' ? 168 : 140,
   },
   heroSection: {
     height: 480,
@@ -984,7 +984,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.05)',
     paddingHorizontal: 20,
     paddingTop: 12,
-    paddingBottom: Platform.OS === 'ios' ? 32 : 20,
+    paddingBottom: Platform.OS === 'ios' ? 32 : (Platform.OS === 'android' ? 44 : 20),
   },
   claimBtnMain: {
     width: '100%',
@@ -1031,6 +1031,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 24,
     gap: 16,
+    paddingBottom: Platform.OS === 'android' ? 24 : 0,
   },
   nsfwGateBadge: {
     borderWidth: 1.5,

@@ -54,6 +54,7 @@ Thumbs.db
 
 # ─── Scratch / Dev notes ─────────────────────────────────────────────────────
 fixes.txt
+scratch/
 
 # ─── Nested backend service (has its own repo) ────────────────────────────────
 /fgf-backend
