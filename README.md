@@ -8,7 +8,7 @@
 
 Track giveaways from Steam, Epic Games, GOG, itch.io, PlayStation, Xbox and more in one place.
 
-[📥 Download Beta APK](https://github.com/EklavyaAhuja/LootQuest/releases/download/v1.1.0/LootQuest-v1.1.0-beta.apk)
+[📥 Download Beta APK](https://github.com/EklavyaAhuja/LootQuest/releases/download/v1.2.0/LootQuest-v1.2.0-beta.apk)
 
 ---
 
@@ -166,7 +166,7 @@ npx expo start
 
 Download the latest Android beta:
 
-[LootQuest v1.1.0 Beta APK](https://github.com/EklavyaAhuja/LootQuest/releases/download/v1.1.0/LootQuest-v1.1.0-beta.apk)
+[LootQuest v1.2.0 Beta APK](https://github.com/EklavyaAhuja/LootQuest/releases/download/v1.2.0/LootQuest-v1.2.0-beta.apk)
 
 ---
 
