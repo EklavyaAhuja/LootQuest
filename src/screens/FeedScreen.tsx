@@ -751,6 +751,8 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
           decelerationRate="fast"
           snapToAlignment="start"
           nestedScrollEnabled={true}
+          directionalLockEnabled={true}
+          scrollEventThrottle={16}
         >
           {featuredPosts.map((post) => {
             const isClaimed = isDealClaimed(post, claimedDeals || []);
@@ -1223,7 +1225,7 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
         <FlatList
           data={remainingPosts}
           keyExtractor={(item) => item.id}
-          ListHeaderComponent={() => (
+          ListHeaderComponent={
             <View>
               {renderFeaturedSection()}
               {remainingPosts.length > 0 && (
@@ -1235,12 +1237,12 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
                 </View>
               )}
             </View>
-          )}
+          }
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           onEndReached={loadMorePosts}
           onEndReachedThreshold={0.5}
-          ListFooterComponent={renderFooter}
+          ListFooterComponent={renderFooter()}
           maxToRenderPerBatch={10}
           windowSize={5}
           initialNumToRender={8}
