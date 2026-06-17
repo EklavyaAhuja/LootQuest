@@ -197,19 +197,41 @@ export default function App() {
 
     // Handle notification clicks (Deep link to detail view)
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data;
+      const data = response.notification.request.content.data as any;
       if (data && data.postId) {
         const title = response.notification.request.content.title || '';
         const body = response.notification.request.content.body || '';
         
-        let platform = 'Steam';
-        if (title.includes('Steam')) platform = 'Steam';
-        else if (title.includes('Epic')) platform = 'Epic Games';
-        else if (title.includes('GOG')) platform = 'GOG';
+        let platform = data.platform || 'Steam';
+        if (!data.platform) {
+          const titleToSearch = (title + ' ' + body + ' ' + (data.redditTitle || '')).toLowerCase();
+          if (titleToSearch.includes('steam')) platform = 'Steam';
+          else if (titleToSearch.includes('epic')) platform = 'Epic Games';
+          else if (titleToSearch.includes('gog')) platform = 'GOG';
+          else if (titleToSearch.includes('itch')) platform = 'Itch.io';
+        }
+
+        let dealTitle = 'New Free Game!';
+        if (data.gameTitle) {
+          dealTitle = data.gameTitle;
+        } else if (data.redditTitle) {
+          dealTitle = data.redditTitle.replace(/^\[[^\]]+\]\s*/, '').replace(/\([^)]+\)\s*/, '').trim();
+        } else if (title.includes('on') && title.includes('!')) {
+          // Local notification format: title="🎁 Free Game on Steam!", body="Train Valley 2"
+          dealTitle = body;
+        } else if (title.startsWith('🆓 ')) {
+          // Remote FCM notification: title="🆓 Train Valley 2"
+          dealTitle = title.replace('🆓 ', '').trim();
+        } else if (body.startsWith('[') && body.includes(']')) {
+          // Old remote format: body="[Steam] (Game) Train Valley 2"
+          dealTitle = body.replace(/^\[[^\]]+\]\s*/, '').replace(/\([^)]+\)\s*/, '').trim();
+        } else {
+          dealTitle = body || title || 'New Free Game!';
+        }
         
         const notificationDeal: Deal = {
           id: String(data.postId),
-          title: body || title || 'New Free Game!',
+          title: dealTitle,
           platform: platform,
           type: 'full_game',
           claimMethod: (data.isTask as boolean) ? 'tasks' : 'one_click',

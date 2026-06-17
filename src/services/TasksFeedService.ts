@@ -60,7 +60,7 @@ class TasksFeedService {
     this.isFetching = true;
     try {
       console.log('[TasksFeedService] Fetching tasks flair feed...');
-      const rssUrl = 'https://old.reddit.com/r/FreeGameFindings/search.rss?q=flair_name:%22Tasks%22&restrict_sr=1&sort=new';
+      const rssUrl = 'https://old.reddit.com/r/FreeGameFindings/search.rss?q=flair:Tasks&restrict_sr=1&sort=new';
       // redditFetch handles 429 backoff – throws if rate-limited or unrecoverable
       const response = await redditFetch(rssUrl);
 

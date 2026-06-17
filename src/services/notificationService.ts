@@ -93,7 +93,14 @@ export async function sendFreeGameNotification(post: RedditPost): Promise<void> 
     content: {
       title: `🎁 ${titlePrefix}${formattedType} on ${post.platform}!`,
       body: post.cleanTitle,
-      data: { postId: post.id, url: post.url, permalink: post.permalink },
+      data: {
+        postId: post.id,
+        url: post.url,
+        permalink: post.permalink,
+        gameTitle: post.cleanTitle,
+        platform: post.platform,
+        isTask: post.isTask,
+      },
       sound: 'long_expected.mp3',
       priority: Notifications.AndroidNotificationPriority.HIGH,
       ...Platform.select({
@@ -392,7 +399,7 @@ export async function registerFCMToken(): Promise<void> {
  */
 async function handleRemoteMessage(remoteMessage: any): Promise<void> {
   try {
-    const { title, body, url, postId, isCustom, image } = remoteMessage.data || {};
+    const { title, body, url, postId, isCustom, image, redditTitle, platform } = remoteMessage.data || {};
     if (title || body) {
       if (isCustom === 'true') {
         const mockPost: RedditPost = {
@@ -415,7 +422,14 @@ async function handleRemoteMessage(remoteMessage: any): Promise<void> {
           content: {
             title: mockPost.title,
             body: mockPost.cleanTitle,
-            data: { postId: mockPost.id, url: mockPost.url, permalink: mockPost.permalink },
+            data: { 
+              postId: mockPost.id, 
+              url: mockPost.url, 
+              permalink: mockPost.permalink,
+              gameTitle: mockPost.title,
+              platform: mockPost.platform,
+              isTask: mockPost.isTask,
+            },
             sound: 'long_expected.mp3',
             priority: Notifications.AndroidNotificationPriority.HIGH,
             ...Platform.select({
@@ -438,7 +452,17 @@ async function handleRemoteMessage(remoteMessage: any): Promise<void> {
       }
 
       // Standard game deal formatting
-      const rawTitle = body || title;
+      let rawTitle = '';
+      if (redditTitle) {
+        rawTitle = redditTitle;
+      } else if (title && title.startsWith('🆓 ')) {
+        const cleanGameName = title.replace('🆓 ', '').trim();
+        const platformName = platform || 'Steam';
+        rawTitle = `[${platformName}] (Game) ${cleanGameName}`;
+      } else {
+        rawTitle = body || title || '';
+      }
+
       const parsed = parseRedditTitle(rawTitle, url || '', '');
 
       const mockPost: RedditPost = {

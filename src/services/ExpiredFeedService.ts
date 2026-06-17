@@ -60,7 +60,7 @@ class ExpiredFeedService {
     this.isFetching = true;
     try {
       console.log('[ExpiredFeedService] Fetching expired flair feed...');
-      const rssUrl = 'https://old.reddit.com/r/FreeGameFindings/search.rss?q=flair_name:%22Expired%22&restrict_sr=1&sort=new';
+      const rssUrl = 'https://old.reddit.com/r/FreeGameFindings/search.rss?q=flair:Expired&restrict_sr=1&sort=new';
       const response = await redditFetch(rssUrl);
 
       const xml = await response.text();

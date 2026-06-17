@@ -40,6 +40,7 @@ interface FeedScreenProps {
 const PLATFORMS_FILTER = ['All', 'Steam', 'Epic Games', 'GOG', 'itch.io', 'Playstation', 'Xbox', 'Mobile', 'Stove', 'Alienware Arena'];
 const CATEGORIES_FILTER = ['All', 'Game', 'DLC', 'Beta', 'Mobile Game'];
 const CLAIM_METHODS_FILTER = ['All', 'One-Click', 'Tasks Required'];
+const PC_PLATFORMS = ['Steam', 'Epic Games', 'GOG', 'itch.io', 'Stove', 'Alienware Arena', 'PC', 'DRM-Free'];
 
 const COVER_IMAGES = [
   'https://images.unsplash.com/photo-1538481199705-c710c4e965fc?auto=format&fit=crop&w=600&q=80',
@@ -211,6 +212,7 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
   const [isSortModalVisible, setIsSortModalVisible] = useState(false);
 
   // Filters State
+  const [filtersLoaded, setFiltersLoaded] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All']);
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(['All']);
@@ -221,6 +223,91 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
   // Sorting State
   const [sortByField, setSortByField] = useState<'start_date' | 'claims' | 'price' | 'release' | 'end_date'>('start_date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Load saved filters on mount
+  useEffect(() => {
+    const loadSavedFilters = async () => {
+      try {
+        const keys = [
+          'fgf_filter_categories',
+          'fgf_filter_platforms',
+          'fgf_filter_claim_method',
+          'fgf_filter_show_expired',
+          'fgf_filter_claim_status',
+          'fgf_sort_by_field',
+          'fgf_sort_direction',
+          'fgf_filter_search',
+        ];
+        const results = await AsyncStorage.multiGet(keys);
+        
+        results.forEach(([key, value]) => {
+          if (value !== null) {
+            try {
+              if (key === 'fgf_filter_categories') {
+                setSelectedCategories(JSON.parse(value));
+              } else if (key === 'fgf_filter_platforms') {
+                setSelectedPlatforms(JSON.parse(value));
+              } else if (key === 'fgf_filter_claim_method') {
+                setSelectedClaimMethod(value);
+              } else if (key === 'fgf_filter_show_expired') {
+                setShowExpired(value === 'true');
+              } else if (key === 'fgf_filter_claim_status') {
+                setSelectedClaimStatus(value as 'All' | 'Claimed' | 'Unclaimed');
+              } else if (key === 'fgf_sort_by_field') {
+                setSortByField(value as any);
+              } else if (key === 'fgf_sort_direction') {
+                setSortDirection(value as 'asc' | 'desc');
+              } else if (key === 'fgf_filter_search') {
+                setSearch(value);
+              }
+            } catch (parseErr) {
+              console.warn(`[FeedScreen] Error parsing saved filter for key ${key}:`, parseErr);
+            }
+          }
+        });
+      } catch (err) {
+        console.warn('[FeedScreen] Failed to load saved filters:', err);
+      } finally {
+        setFiltersLoaded(true);
+      }
+    };
+    loadSavedFilters();
+  }, []);
+
+  // Save filters to AsyncStorage when they change
+  useEffect(() => {
+    if (!filtersLoaded) return;
+
+    const saveFilters = async () => {
+      try {
+        const pairs: [string, string][] = [
+          ['fgf_filter_categories', JSON.stringify(selectedCategories)],
+          ['fgf_filter_platforms', JSON.stringify(selectedPlatforms)],
+          ['fgf_filter_claim_method', selectedClaimMethod],
+          ['fgf_filter_show_expired', String(showExpired)],
+          ['fgf_filter_claim_status', selectedClaimStatus],
+          ['fgf_sort_by_field', sortByField],
+          ['fgf_sort_direction', sortDirection],
+          ['fgf_filter_search', search],
+        ];
+        await AsyncStorage.multiSet(pairs);
+      } catch (err) {
+        console.warn('[FeedScreen] Failed to save filters:', err);
+      }
+    };
+
+    saveFilters();
+  }, [
+    selectedCategories,
+    selectedPlatforms,
+    selectedClaimMethod,
+    showExpired,
+    selectedClaimStatus,
+    sortByField,
+    sortDirection,
+    search,
+    filtersLoaded,
+  ]);
 
   const handleImageError = useCallback((id: string) => {
     setImageErrors(prev => ({ ...prev, [id]: true }));
@@ -245,9 +332,8 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
     }
 
     try {
-      // Step 2 & 3 — Sequential execution
       console.log('[BackgroundSync] Starting Expired feed sync...');
-      await expiredFeedService.getExpiredPostIds(isRefreshing);
+      const expiredIds = await expiredFeedService.getExpiredPostIds(isRefreshing);
       
       if (await isRedditRateLimited()) {
         console.log('[BackgroundSync] Reddit became rate-limited after Expired sync. Aborting.');
@@ -258,12 +344,30 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
       await new Promise(resolve => setTimeout(resolve, 2500));
 
       console.log('[BackgroundSync] Starting Tasks feed sync...');
-      await tasksFeedService.getTasksPostIds(isRefreshing);
+      const tasksIds = await tasksFeedService.getTasksPostIds(isRefreshing);
 
       if (await isRedditRateLimited()) {
         console.log('[BackgroundSync] Reddit became rate-limited after Tasks sync. Aborting.');
         return;
       }
+
+      // Propagate the newly fetched expired and tasks statuses to state and cache immediately
+      setPosts((prevPosts) => {
+        const updated = prevPosts.map((deal) => {
+          const isExpiredFromFlair = expiredIds.has(deal.id);
+          const isTaskFromFlair = tasksIds.has(deal.id);
+          const expired = isExpiredFromFlair || isDealExpired(deal);
+          return {
+            ...deal,
+            isExpired: expired,
+            timeLeft: getTimeLeft(deal.expiresAt || deal.endDate),
+            expiryStatus: expired ? 'EXPIRED' : deal.expiryStatus,
+            claimMethod: isTaskFromFlair ? 'tasks' : deal.claimMethod,
+          };
+        });
+        AsyncStorage.setItem('fgf_merged_feed_cache', JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
 
       console.log('[BackgroundSync] Staggering (waiting 2.5s)...');
       await new Promise(resolve => setTimeout(resolve, 2500));
@@ -347,7 +451,7 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
           if (Array.isArray(cachedDeals) && cachedDeals.length > 0) {
             // Recalculate stale countdown timers and expiration states on cached deals immediately
             const recalculated = cachedDeals.map((deal: Deal) => {
-              const expired = isDealExpired(deal);
+              const expired = deal.isExpired || deal.expiryStatus === 'EXPIRED' || isDealExpired(deal);
               return {
                 ...deal,
                 isExpired: expired,
@@ -496,7 +600,7 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
     const interval = setInterval(() => {
       setPosts((prevPosts) =>
         prevPosts.map((deal) => {
-          const expired = isDealExpired(deal);
+          const expired = deal.isExpired || deal.expiryStatus === 'EXPIRED' || isDealExpired(deal);
           return {
             ...deal,
             isExpired: expired,
@@ -849,6 +953,11 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
     );
   }, [claimedDeals, onDealSelect, getGameCover, imageErrors, handleImageError]);
 
+  const isPcActive = PC_PLATFORMS.every(p => selectedPlatforms.includes(p)) && selectedPlatforms.length === PC_PLATFORMS.length && selectedClaimMethod === 'All';
+  const isConsoleActive = selectedPlatforms.includes('Playstation') && selectedPlatforms.includes('Xbox') && selectedClaimMethod === 'All';
+  const isSteamActive = selectedPlatforms.length === 1 && selectedPlatforms[0] === 'Steam' && selectedClaimMethod === 'One-Click';
+  const isEpicActive = selectedPlatforms.length === 1 && selectedPlatforms[0] === 'Epic Games' && selectedClaimMethod === 'One-Click';
+
   return (
     <View style={styles.container}>
       {/* GamerPower Warning Banner */}
@@ -908,27 +1017,34 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
           {/* Quick PC filter */}
           <Pressable
             onPress={() => {
-              if (selectedPlatforms.includes('Steam')) {
+              setSelectedClaimMethod('All');
+              if (isPcActive) {
                 setSelectedPlatforms(['All']);
               } else {
-                setSelectedPlatforms(['Steam']);
+                setSelectedPlatforms([...PC_PLATFORMS]);
               }
             }}
             style={[
               styles.quickFilterChip,
-              selectedPlatforms.includes('Steam') && styles.quickFilterChipActive
+              isPcActive && styles.quickFilterChipActive
             ]}
           >
+            <Monitor 
+              size={14} 
+              color={isPcActive ? COLORS.bg : COLORS.textMuted} 
+              style={{ marginRight: 6 }} 
+            />
             <Text style={[
               styles.quickFilterChipText,
-              selectedPlatforms.includes('Steam') && styles.quickFilterChipTextActive
+              isPcActive && styles.quickFilterChipTextActive
             ]}>PC</Text>
           </Pressable>
 
           {/* Quick Console filter */}
           <Pressable
             onPress={() => {
-              if (selectedPlatforms.includes('Playstation') || selectedPlatforms.includes('Xbox')) {
+              setSelectedClaimMethod('All');
+              if (isConsoleActive) {
                 setSelectedPlatforms(['All']);
               } else {
                 setSelectedPlatforms(['Playstation', 'Xbox']);
@@ -936,13 +1052,74 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
             }}
             style={[
               styles.quickFilterChip,
-              (selectedPlatforms.includes('Playstation') || selectedPlatforms.includes('Xbox')) && styles.quickFilterChipActive
+              isConsoleActive && styles.quickFilterChipActive
             ]}
           >
+            <Gamepad 
+              size={14} 
+              color={isConsoleActive ? COLORS.bg : COLORS.textMuted} 
+              style={{ marginRight: 6 }} 
+            />
             <Text style={[
               styles.quickFilterChipText,
-              (selectedPlatforms.includes('Playstation') || selectedPlatforms.includes('Xbox')) && styles.quickFilterChipTextActive
+              isConsoleActive && styles.quickFilterChipTextActive
             ]}>Console</Text>
+          </Pressable>
+
+          {/* Quick Steam One-Click preset */}
+          <Pressable
+            onPress={() => {
+              if (isSteamActive) {
+                setSelectedPlatforms(['All']);
+                setSelectedClaimMethod('All');
+              } else {
+                setSelectedPlatforms(['Steam']);
+                setSelectedClaimMethod('One-Click');
+              }
+            }}
+            style={[
+              styles.quickFilterChip,
+              isSteamActive && styles.quickFilterChipActive
+            ]}
+          >
+            <StoreIcon 
+              platform="steam" 
+              size={14} 
+              color={isSteamActive ? COLORS.bg : COLORS.textMuted} 
+              style={{ marginRight: 6 }} 
+            />
+            <Text style={[
+              styles.quickFilterChipText,
+              isSteamActive && styles.quickFilterChipTextActive
+            ]}>Steam</Text>
+          </Pressable>
+
+          {/* Quick Epic Games One-Click preset */}
+          <Pressable
+            onPress={() => {
+              if (isEpicActive) {
+                setSelectedPlatforms(['All']);
+                setSelectedClaimMethod('All');
+              } else {
+                setSelectedPlatforms(['Epic Games']);
+                setSelectedClaimMethod('One-Click');
+              }
+            }}
+            style={[
+              styles.quickFilterChip,
+              isEpicActive && styles.quickFilterChipActive
+            ]}
+          >
+            <StoreIcon 
+              platform="epic" 
+              size={14} 
+              color={isEpicActive ? COLORS.bg : COLORS.textMuted} 
+              style={{ marginRight: 6 }} 
+            />
+            <Text style={[
+              styles.quickFilterChipText,
+              isEpicActive && styles.quickFilterChipTextActive
+            ]}>Epic Games</Text>
           </Pressable>
         </ScrollView>
       </View>
@@ -1212,7 +1389,7 @@ export default function FeedScreen({ onDealSelect, claimedDeals = [], onNewAlert
       </Modal>
 
       {/* Fresh Listings */}
-      {loading ? (
+      {loading || !filtersLoaded ? (
         <View style={styles.center}>
           <HourglassLoader />
         </View>
@@ -1379,6 +1556,8 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   quickFilterChipActive: {
     backgroundColor: COLORS.primary,

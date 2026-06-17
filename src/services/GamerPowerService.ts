@@ -112,16 +112,14 @@ export async function fetchGamerPowerGiveaways(
 
     // Map GamerPower native type to our enum
     const gpType = (item.type || '').toLowerCase();
-    if (classification.type === 'mobile_game') {
-      finalType = 'mobile_game';
-    } else if (gpType === 'loot' || gpType === 'item') {
+    if (gpType === 'loot' || gpType === 'item') {
       finalType = 'loot';
     } else if (gpType === 'beta') {
       finalType = 'beta';
     } else if (gpType === 'dlc') {
       finalType = 'dlc';
     } else {
-      finalType = 'full_game';
+      finalType = classification.type || 'full_game';
     }
 
     const claimMethod = determineClaimMethod(item.instructions || '', item.title || '', platformString, giveawayUrl);

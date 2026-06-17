@@ -73,6 +73,7 @@ class DealEnrichmentService {
         ...deal,
         ...cached,
         platform: deal.platform,
+        type: deal.type,
         expiryStatus: isExpiredFromFlair ? 'EXPIRED' : cached.expiryStatus,
         claimMethod: isTaskFromFlair
           ? 'tasks'

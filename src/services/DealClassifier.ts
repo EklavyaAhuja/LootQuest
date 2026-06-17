@@ -5,12 +5,13 @@ import { tasksFeedService } from './TasksFeedService';
 import { parseExpiryFromPostBody, getExpiryStatus, checkIsFullyFree } from './FGFBotParser';
 import { isDealExpired, getTimeLeft, determineClaimMethod, getCleanPlatform } from '../utils/dealUtils';
 
-export function classifyDeal(title: string, description: string, platform?: string, url?: string): {
+export function classifyDeal(title: string, description: string, platform?: string, url?: string, rawType?: string): {
   type: Deal['type'];
   claimMethod: Deal['claimMethod'];
 } {
   const text = `${title} ${description} ${url || ''}`.toLowerCase();
   const plat = (platform || '').toLowerCase();
+  const rawTypeLower = (rawType || '').toLowerCase().trim();
 
   // 1. Detect Type
   let type: Deal['type'] = 'full_game';
@@ -20,7 +21,15 @@ export function classifyDeal(title: string, description: string, platform?: stri
   const itemKeywords = ['skin', 'weapon', 'mount', 'currency', 'coins', 'pack', 'in-game content'];
   const mobileKeywords = ['android', 'ios', 'mobile', 'google play', 'app store', 'iphone', 'ipad', 'apk'];
 
-  if (
+  if (rawTypeLower === 'other' || title.toLowerCase().includes('(other)')) {
+    type = 'item';
+  } else if (dlcKeywords.some(kw => text.includes(kw))) {
+    type = 'dlc';
+  } else if (betaKeywords.some(kw => text.includes(kw))) {
+    type = 'beta';
+  } else if (itemKeywords.some(kw => text.includes(kw))) {
+    type = 'item';
+  } else if (
     plat.includes('android') ||
     plat.includes('ios') ||
     plat.includes('mobile') ||
@@ -30,12 +39,6 @@ export function classifyDeal(title: string, description: string, platform?: stri
     type = 'mobile_game';
   } else if (mobileKeywords.some(kw => text.includes(kw))) {
     type = 'mobile_game';
-  } else if (dlcKeywords.some(kw => text.includes(kw))) {
-    type = 'dlc';
-  } else if (betaKeywords.some(kw => text.includes(kw))) {
-    type = 'beta';
-  } else if (itemKeywords.some(kw => text.includes(kw))) {
-    type = 'item';
   } else {
     type = 'full_game';
   }
@@ -56,7 +59,7 @@ export function postToBasicDeal(post: RedditPost): Deal {
   const platform = post.platform || anyPost.platform || '';
   const url = post.url || anyPost.url || '';
   
-  const { type, claimMethod } = classifyDeal(title, selftext, platform, url);
+  const { type, claimMethod } = classifyDeal(title, selftext, platform, url, post.type || anyPost.type);
   const isExpiredFromFlair = expiredFeedService.isExpired(post.id);
   const isTaskFromFlair = tasksFeedService.isTask(post.id);
   const isFree = checkIsFullyFree(title, selftext);

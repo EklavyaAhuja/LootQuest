@@ -361,7 +361,7 @@ export async function fetchMergedGameFeed(
       const now = Date.now();
       const cooldownMs = 5 * 60 * 1000; // 5 minutes
 
-      if (now - lastFetch < cooldownMs) {
+      if (!forceRefresh && now - lastFetch < cooldownMs) {
         useCache = true;
       }
     }
