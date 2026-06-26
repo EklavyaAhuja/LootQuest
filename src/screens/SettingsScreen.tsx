@@ -22,6 +22,7 @@ import {
 import {
   registerBackgroundFetch,
   unregisterBackgroundFetch,
+  testReceiveFCM,
 } from '../services/notificationService';
 import {
   Bell,
@@ -33,7 +34,7 @@ import {
 } from 'lucide-react-native';
 import StoreIcon from '../components/StoreIcon';
 
-const ALL_PLATFORMS = ['Steam', 'Epic Games', 'GOG', 'itch.io', 'Playstation', 'Xbox'];
+const ALL_PLATFORMS = ['Steam', 'Epic Games', 'GOG', 'itch.io', 'Playstation', 'Xbox', 'Other'];
 const ALL_TYPES = [
   { key: 'Game', label: 'Full Games' },
   { key: 'DLC', label: 'DLCs' },
@@ -56,6 +57,13 @@ export default function SettingsScreen() {
     };
     loadData();
   }, []);
+
+  const handleNotificationsEnabledToggle = async () => {
+    if (!settings) return;
+    const updated = { ...settings, notificationsEnabled: !settings.notificationsEnabled };
+    setSettings(updated);
+    await saveAppSettings(updated);
+  };
 
   const handlePlatformToggle = async (plat: string) => {
     if (!settings) return;
@@ -139,6 +147,15 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleOpenKofi = async () => {
+    const url = 'https://ko-fi.com/H7O52237NT';
+    try {
+      await Linking.openURL(url);
+    } catch (e) {
+      Alert.alert('Error', 'Failed to open Ko-fi link.');
+    }
+  };
+
   const handleJoinDiscord = async () => {
     const url = 'https://discord.gg/pXxnhKWdGH';
     try {
@@ -177,23 +194,43 @@ export default function SettingsScreen() {
           <Text style={styles.cardTitle}>Alerts</Text>
         </View>
 
+        {/* Global Notifications Toggle */}
+        <View style={[styles.listRow, styles.listRowBorder]}>
+          <View style={[styles.platformIconBg, { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
+            <Bell size={14} color={COLORS.text} />
+          </View>
+          <Text style={[styles.listRowLabel, { color: COLORS.text, fontFamily: FONTS.bold }]}>Push Notifications</Text>
+          <Switch
+            value={settings.notificationsEnabled}
+            onValueChange={handleNotificationsEnabledToggle}
+            trackColor={{ false: 'rgba(255,255,255,0.08)', true: COLORS.primary }}
+            thumbColor={
+              Platform.OS === 'android'
+                ? settings.notificationsEnabled ? COLORS.bg : '#888'
+                : undefined
+            }
+          />
+        </View>
+
         {ALL_PLATFORMS.map((p, idx) => {
           const isEnabled = settings.notificationPlatforms.includes(p);
           const bgColor = getPlatformColor(p);
           const isLast = idx === ALL_PLATFORMS.length - 1;
+          const disabled = !settings.notificationsEnabled;
           return (
-            <View key={p} style={[styles.listRow, !isLast && styles.listRowBorder]}>
+            <View key={p} style={[styles.listRow, !isLast && styles.listRowBorder, disabled && { opacity: 0.4 }]} pointerEvents={disabled ? 'none' : 'auto'}>
               <View style={[styles.platformIconBg, { backgroundColor: bgColor }]}>
                 <StoreIcon platform={p} size={14} color="#fff" />
               </View>
               <Text style={styles.listRowLabel}>{p}</Text>
               <Switch
-                value={isEnabled}
+                value={isEnabled && !disabled}
+                disabled={disabled}
                 onValueChange={() => handlePlatformToggle(p)}
                 trackColor={{ false: 'rgba(255,255,255,0.08)', true: COLORS.primary }}
                 thumbColor={
                   Platform.OS === 'android'
-                    ? isEnabled ? COLORS.bg : '#888'
+                    ? isEnabled && !disabled ? COLORS.bg : '#888'
                     : undefined
                 }
               />
@@ -234,7 +271,7 @@ export default function SettingsScreen() {
       </View>
 
       {/* ── Content Filters Card ── */}
-      <View style={styles.card}>
+      <View style={[styles.card, !settings.notificationsEnabled && { opacity: 0.4 }]}>
         <View style={styles.cardHeader}>
           <View style={[styles.headerIconCircle, { borderColor: COLORS.success }]}>
             <SlidersHorizontal size={15} color={COLORS.success} />
@@ -247,17 +284,19 @@ export default function SettingsScreen() {
         {ALL_TYPES.map(({ key, label }, idx) => {
           const isChecked = settings.notificationTypes.includes(key);
           const isLast = idx === ALL_TYPES.length - 1;
+          const disabled = !settings.notificationsEnabled;
           return (
             <TouchableOpacity
               key={key}
               style={[styles.listRow, !isLast && styles.listRowBorder]}
-              onPress={() => handleTypeToggle(key)}
-              activeOpacity={0.7}
+              onPress={() => !disabled && handleTypeToggle(key)}
+              activeOpacity={disabled ? 1 : 0.7}
+              disabled={disabled}
             >
-              <View style={[styles.checkbox, isChecked && styles.checkboxChecked]}>
-                {isChecked && <Check size={10} color={COLORS.bg} />}
+              <View style={[styles.checkbox, isChecked && !disabled && styles.checkboxChecked]}>
+                {isChecked && !disabled && <Check size={10} color={COLORS.bg} />}
               </View>
-              <Text style={[styles.listRowLabel, isChecked && styles.listRowLabelActive]}>
+              <Text style={[styles.listRowLabel, isChecked && !disabled && styles.listRowLabelActive]}>
                 {label}
               </Text>
             </TouchableOpacity>
@@ -300,15 +339,58 @@ export default function SettingsScreen() {
           <View style={[styles.headerIconCircle, { borderColor: COLORS.secondary }]}>
             <MessageCircle size={15} color={COLORS.secondary} />
           </View>
-          <Text style={styles.cardTitle}>Community</Text>
+          <Text style={styles.cardTitle}>Community & Support</Text>
+        </View>
+        <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+          <Text style={styles.devNoteParagraph}>
+            If you like using LootQuest, please consider supporting the project! Your support helps keep the notification servers running.
+          </Text>
         </View>
         <TouchableOpacity
-          style={styles.discordBtn}
+          style={styles.kofiBtn}
+          onPress={handleOpenKofi}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.kofiText}>☕ Support on Ko-fi</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.discordBtn, { marginTop: 6, marginBottom: 14 }]}
           onPress={handleJoinDiscord}
           activeOpacity={0.85}
         >
           <Text style={styles.discordText}>Join Discord Server</Text>
         </TouchableOpacity>
+      </View>
+
+      {/* ── Diagnostics Card ── */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={[styles.headerIconCircle, { borderColor: '#eab308' }]}>
+            <SlidersHorizontal size={15} color="#eab308" />
+          </View>
+          <Text style={styles.cardTitle}>Diagnostics</Text>
+        </View>
+        <View style={styles.devNoteContent}>
+          <Text style={styles.devNoteParagraph}>
+            Test your active filters immediately by simulating push notifications. This triggers real local notifications for those allowed by your filters.
+          </Text>
+          <TouchableOpacity
+            style={[styles.submitBtn, { backgroundColor: '#eab308', marginHorizontal: 0, marginTop: 4 }]}
+            onPress={async () => {
+              const res1 = await testReceiveFCM('Steam', 'Game', 'Diagnostic: Steam Game Alert');
+              const res2 = await testReceiveFCM('GOG', 'DLC', 'Diagnostic: GOG DLC Alert');
+              const res3 = await testReceiveFCM('IndieGala', 'Beta', 'Diagnostic: IndieGala Beta Alert');
+              Alert.alert(
+                'Diagnostic Results',
+                `1. ${res1}\n\n2. ${res2}\n\n3. ${res3}`,
+                [{ text: 'OK' }]
+              );
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.submitText, { color: '#131313' }]}>Run Filter Diagnostics</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* ── Developer's Note Card ── */}
@@ -554,6 +636,25 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.bold,
     fontSize: 12,
     color: COLORS.textMuted,
+  },
+  kofiBtn: {
+    marginHorizontal: 16,
+    marginTop: 14,
+    borderRadius: 24,
+    backgroundColor: '#FF5E5B', // Ko-fi Signature Red/Coral
+    paddingVertical: 13,
+    alignItems: 'center',
+    shadowColor: '#FF5E5B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  kofiText: {
+    fontFamily: FONTS.bold,
+    fontSize: 15,
+    color: '#ffffff',
+    letterSpacing: 0.2,
   },
   highlightedNameTextOnly: {
     fontFamily: FONTS.bold,

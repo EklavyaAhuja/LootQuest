@@ -62,7 +62,20 @@ export async function getAppSettings(): Promise<AppSettings> {
   try {
     const raw = await AsyncStorage.getItem(ASYNC_KEYS.SETTINGS);
     if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    
+    // Migration: if notificationPlatforms is missing or empty, default to ALL platforms
+    // because in the old version, empty meant "all".
+    if (!parsed.hasOwnProperty('notificationPlatforms') || !Array.isArray(parsed.notificationPlatforms) || parsed.notificationPlatforms.length === 0) {
+      parsed.notificationPlatforms = [...DEFAULT_SETTINGS.notificationPlatforms];
+    }
+    
+    // Migration: if notificationTypes is missing or empty, default to all types
+    if (!parsed.hasOwnProperty('notificationTypes') || !Array.isArray(parsed.notificationTypes) || parsed.notificationTypes.length === 0) {
+      parsed.notificationTypes = [...DEFAULT_SETTINGS.notificationTypes];
+    }
+    
+    return { ...DEFAULT_SETTINGS, ...parsed };
   } catch (e) {
     console.error('Error reading app settings:', e);
     return DEFAULT_SETTINGS;

@@ -5,7 +5,7 @@ import { fetchFreeGameFindings, RedditPost, parseRedditTitle } from './redditSer
 import { getAppSettings, getSeenPosts, addSeenPosts } from './storageService';
 import { getCachedDeal } from './DealCache';
 import { Deal } from '../models/Deal';
-import { normalizeTitle } from '../utils/dealUtils';
+import { normalizeTitle, getCanonicalPlatform } from '../utils/dealUtils';
 
 let messaging: any = null;
 try {
@@ -83,15 +83,142 @@ export function formatType(type: string): string {
     .join(' ');
 }
 
+export function getCatchyNotificationTitle(platform: string, type: string): string {
+  const plat = (platform || '').trim();
+  const rawType = (type || '').trim();
+  
+  const platLower = plat.toLowerCase();
+  const typeLower = rawType.toLowerCase();
+
+  let displayType = 'game';
+  if (typeLower.includes('dlc')) {
+    displayType = 'DLC';
+  } else if (typeLower.includes('beta') || typeLower.includes('alpha')) {
+    displayType = 'beta';
+  } else if (typeLower.includes('announcement')) {
+    displayType = 'announcement';
+  } else if (typeLower.includes('epic') || typeLower.includes('steam') || typeLower.includes('gog') || typeLower.includes('itch') || typeLower.includes('mobile')) {
+    displayType = 'game';
+  }
+
+  let displayPlat = plat;
+  if (platLower === 'pc') {
+    if (typeLower.includes('epic')) {
+      displayPlat = 'Epic Games';
+    } else if (typeLower.includes('steam')) {
+      displayPlat = 'Steam';
+    } else if (typeLower.includes('gog')) {
+      displayPlat = 'GOG';
+    } else if (typeLower.includes('itch')) {
+      displayPlat = 'itch.io';
+    }
+  }
+
+  const isDlc = displayType === 'DLC';
+  const isBeta = displayType === 'beta';
+  const isAnnouncement = displayType === 'announcement';
+
+  if (isAnnouncement) {
+    return `📢 LootQuest Update!`;
+  }
+
+  if (isDlc) {
+    if (platLower.includes('steam')) return `🎁 Free Steam DLC alert!`;
+    if (platLower.includes('epic')) return `🎁 Free Epic Games DLC alert!`;
+    if (platLower.includes('gog')) return `🎁 Free GOG DLC alert!`;
+    return `🎁 Free DLC on ${displayPlat}!`;
+  }
+
+  if (isBeta) {
+    if (platLower.includes('steam')) return `🎮 New Steam Beta access!`;
+    if (platLower.includes('epic')) return `🎮 New Epic Games Beta!`;
+    if (platLower.includes('xbox')) return `🎮 Xbox Beta available!`;
+    if (platLower.includes('playstation') || platLower.includes('ps4') || platLower.includes('ps5')) return `🎮 PlayStation Beta available!`;
+    return `🎮 New Beta on ${displayPlat}!`;
+  }
+
+  const platName = displayPlat.toLowerCase();
+  
+  if (platName.includes('steam')) {
+    return `🎁 Free Steam game alert!`;
+  }
+  if (platName.includes('epic')) {
+    return `🎁 Free game on Epic Games!`;
+  }
+  if (platName.includes('gog')) {
+    return `🎁 Free GOG game alert!`;
+  }
+  if (platName.includes('itch')) {
+    return `🎁 Free itch.io game alert!`;
+  }
+  if (platName.includes('android')) {
+    return `🎁 Free Android game spotted!`;
+  }
+  if (platName.includes('ios') || platName.includes('apple')) {
+    return `🎁 Free iOS game spotted!`;
+  }
+  if (platName.includes('playstation') || platName.includes('ps4') || platName.includes('ps5')) {
+    return `🎁 Free PlayStation game spotted!`;
+  }
+  if (platName.includes('xbox')) {
+    return `🎁 Free Xbox game spotted!`;
+  }
+  if (platName.includes('nintendo') || platName.includes('switch')) {
+    return `🎁 Free Switch game spotted!`;
+  }
+
+  return `🎁 Free game on ${displayPlat}!`;
+}
+
+export function getCatchyNotificationDescription(platform: string, type: string): string {
+  const plat = (platform || '').trim();
+  const rawType = (type || '').trim();
+  
+  const platLower = plat.toLowerCase();
+  const typeLower = rawType.toLowerCase();
+
+  let displayType = 'game';
+  if (typeLower.includes('dlc')) {
+    displayType = 'DLC';
+  } else if (typeLower.includes('beta') || typeLower.includes('alpha')) {
+    displayType = 'beta';
+  } else if (typeLower.includes('epic') || typeLower.includes('steam') || typeLower.includes('gog') || typeLower.includes('itch') || typeLower.includes('mobile')) {
+    displayType = 'game';
+  }
+
+  let displayPlat = plat;
+  if (platLower === 'pc') {
+    if (typeLower.includes('epic')) {
+      displayPlat = 'Epic Games';
+    } else if (typeLower.includes('steam')) {
+      displayPlat = 'Steam';
+    } else if (typeLower.includes('gog')) {
+      displayPlat = 'GOG';
+    } else if (typeLower.includes('itch')) {
+      displayPlat = 'itch.io';
+    }
+  }
+
+  const isDlc = displayType === 'DLC';
+  const isBeta = displayType === 'beta';
+
+  if (isDlc) {
+    return `Free DLC on ${displayPlat}! Claim it now.`;
+  }
+  if (isBeta) {
+    return `Beta access available on ${displayPlat}. Play now!`;
+  }
+  return `Free game on ${displayPlat}! Claim it now.`;
+}
+
 /**
  * Send a local notification for a free game
  */
 export async function sendFreeGameNotification(post: RedditPost): Promise<void> {
-  const formattedType = formatType(post.type);
-  const titlePrefix = formattedType.toLowerCase().startsWith('free') ? '' : 'Free ';
+  const title = getCatchyNotificationTitle(post.platform, post.type);
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: `🎁 ${titlePrefix}${formattedType} on ${post.platform}!`,
+      title: title,
       body: post.cleanTitle,
       data: {
         postId: post.id,
@@ -165,8 +292,6 @@ export async function addAlertLog(post: RedditPost): Promise<void> {
     }
 
     const isAnnouncement = post.type === 'announcement';
-    const formattedType = formatType(post.type || 'game');
-    const descPrefix = formattedType.toLowerCase().startsWith('free') ? '' : 'Free ';
 
     // Resolve cover image from current feed cache or deal cache with robust matching
     let coverImage = post.coverImage;
@@ -255,7 +380,7 @@ export async function addAlertLog(post: RedditPost): Promise<void> {
     const newAlert = {
       id: post.id,
       title: isAnnouncement ? post.title : (post.cleanTitle || post.title),
-      description: isAnnouncement ? post.cleanTitle : `${descPrefix}${formattedType} on ${post.platform}! Claim it now.`,
+      description: isAnnouncement ? post.cleanTitle : getCatchyNotificationDescription(post.platform, post.type),
       timestamp: Date.now(),
       platform: post.platform,
       isLive: true,
@@ -394,6 +519,18 @@ export async function registerFCMToken(): Promise<void> {
   }
 }
 
+function cleanTitleForMatching(t: string): string {
+  if (!t) return "";
+  return t
+    .toLowerCase()
+    .replace(/\[[^\]]+\]/g, "") // remove brackets
+    .replace(/\([^)]+\)/g, "")   // remove parentheses
+    // remove common platform/promo keywords as words
+    .replace(/\b(steam|gog|epicgames|epic|itchio|itch|playstation|xbox|pc|dlc|key|giveaway|free|game|pack|bundle)\b/g, "")
+    .replace(/[^a-z0-9]/gi, "")  // remove non-alphanumeric
+    .trim();
+}
+
 /**
  * Processes incoming foreground/background FCM messages.
  */
@@ -401,6 +538,8 @@ async function handleRemoteMessage(remoteMessage: any): Promise<void> {
   try {
     const { title, body, url, postId, isCustom, image, redditTitle, platform } = remoteMessage.data || {};
     if (title || body) {
+      const settings = await getAppSettings();
+
       if (isCustom === 'true') {
         const mockPost: RedditPost = {
           id: postId || remoteMessage.messageId || String(Date.now()),
@@ -416,6 +555,14 @@ async function handleRemoteMessage(remoteMessage: any): Promise<void> {
           domain: '',
           isTask: false,
         };
+
+        // Custom announcements bypass platform/type filters but respect global switch
+        if (!settings.notificationsEnabled) {
+          if (__DEV__) {
+            console.log('[NotificationService] Skipping announcement because notifications are disabled globally.');
+          }
+          return;
+        }
 
         // Schedule notification with exact custom title and message body
         await Notifications.scheduleNotificationAsync({
@@ -481,6 +628,97 @@ async function handleRemoteMessage(remoteMessage: any): Promise<void> {
         coverImage: image || undefined,
       };
 
+      // Deduplicate check: skip if we've already notified the user about this game on this platform within the last 7 days
+      const incomingTitleClean = cleanTitleForMatching(mockPost.cleanTitle || mockPost.title);
+      const incomingPlatCanonical = getCanonicalPlatform(mockPost.platform);
+      
+      const rawLogs = await AsyncStorage.getItem('fgf_notification_logs_v2');
+      if (rawLogs) {
+        let logs = [];
+        try {
+          logs = JSON.parse(rawLogs);
+        } catch (e) {
+          console.warn('[NotificationService] Error parsing notification logs history:', e);
+        }
+        const isDuplicate = logs.some((log: any) => {
+          const logTitleClean = cleanTitleForMatching(log.title);
+          const logPlatCanonical = getCanonicalPlatform(log.platform);
+          
+          const titleMatches = logTitleClean === incomingTitleClean;
+          const platformMatches = logPlatCanonical === incomingPlatCanonical;
+          
+          const timeDiff = Math.abs(Date.now() - (log.timestamp || 0));
+          const isRecent = timeDiff < 7 * 24 * 60 * 60 * 1000; // 7 days
+          
+          return titleMatches && platformMatches && isRecent;
+        });
+
+        if (isDuplicate) {
+          if (__DEV__) {
+            console.log(`[NotificationService] Skipping duplicate notification for "${mockPost.cleanTitle}" on platform "${mockPost.platform}".`);
+          }
+          return;
+        }
+      }
+
+      // Filter check 1: Global notifications switch
+      if (!settings.notificationsEnabled) {
+        if (__DEV__) {
+          console.log('[NotificationService] Skipping notification because notifications are disabled globally.');
+        }
+        return;
+      }
+
+      // Filter check 2: Platform filtering
+      let platformMatches = false;
+      const postPlatLower = (mockPost.platform || '').toLowerCase();
+      const MAIN_PLATFORMS = ['Steam', 'Epic Games', 'GOG', 'itch.io', 'Playstation', 'Xbox'];
+      
+      let matchedAnyMain = false;
+      for (const mainPlat of MAIN_PLATFORMS) {
+        const mainPlatLower = mainPlat.toLowerCase();
+        if (postPlatLower.includes(mainPlatLower) || mainPlatLower.includes(postPlatLower)) {
+          matchedAnyMain = true;
+          if (settings.notificationPlatforms.includes(mainPlat)) {
+            platformMatches = true;
+          }
+        }
+      }
+      if (!matchedAnyMain) {
+        if (settings.notificationPlatforms.includes('Other')) {
+          platformMatches = true;
+        }
+      }
+
+      if (!platformMatches) {
+        if (__DEV__) {
+          console.log(`[NotificationService] Skipping notification for "${mockPost.cleanTitle}" because platform "${mockPost.platform}" is unchecked.`);
+        }
+        return;
+      }
+
+      // Filter check 3: Content Type filtering
+      let typeMatches = false;
+      const postTypeLower = (mockPost.type || 'game').toLowerCase();
+      let targetTypeKey = 'Game'; // default fallback
+      
+      if (postTypeLower.includes('dlc')) {
+        targetTypeKey = 'DLC';
+      } else if (postTypeLower.includes('beta') || postTypeLower.includes('alpha')) {
+        targetTypeKey = 'Beta';
+      }
+      
+      if (settings.notificationTypes.includes(targetTypeKey)) {
+        typeMatches = true;
+      }
+
+      if (!typeMatches) {
+        if (__DEV__) {
+          console.log(`[NotificationService] Skipping notification for "${mockPost.cleanTitle}" because type category "${targetTypeKey}" (raw: "${mockPost.type}") is unchecked.`);
+        }
+        return;
+      }
+
       await sendFreeGameNotification(mockPost);
       await addAlertLog(mockPost);
 
@@ -490,6 +728,89 @@ async function handleRemoteMessage(remoteMessage: any): Promise<void> {
     }
   } catch (err) {
     console.error('[NotificationService] Error handling remote message:', err);
+  }
+}
+
+/**
+ * Diagnostic helper to simulate receiving an FCM push notification
+ */
+export async function testReceiveFCM(platform: string, type: string, cleanTitle: string): Promise<string> {
+  const mockRedditTitle = `[${platform}] (${type}) ${cleanTitle}`;
+  const remoteMessage = {
+    data: {
+      title: '🎁 Free Game Alert!',
+      body: mockRedditTitle,
+      redditTitle: mockRedditTitle,
+      platform: platform,
+      postId: 'test_fcm_' + platform.toLowerCase() + '_' + Date.now(),
+    }
+  };
+
+  const settings = await getAppSettings();
+  
+  // Trace platform matching
+  const postPlatLower = platform.toLowerCase();
+  let matchedAnyMain = false;
+  let platformMatches = false;
+  const MAIN_PLATFORMS = ['Steam', 'Epic Games', 'GOG', 'itch.io', 'Playstation', 'Xbox'];
+  for (const mainPlat of MAIN_PLATFORMS) {
+    const mainPlatLower = mainPlat.toLowerCase();
+    if (postPlatLower.includes(mainPlatLower) || mainPlatLower.includes(postPlatLower)) {
+      matchedAnyMain = true;
+      if (settings.notificationPlatforms.includes(mainPlat)) {
+        platformMatches = true;
+      }
+    }
+  }
+  if (!matchedAnyMain && settings.notificationPlatforms.includes('Other')) {
+    platformMatches = true;
+  }
+
+  // Trace type matching
+  const postTypeLower = type.toLowerCase();
+  let targetTypeKey = 'Game';
+  if (postTypeLower.includes('dlc')) {
+    targetTypeKey = 'DLC';
+  } else if (postTypeLower.includes('beta') || postTypeLower.includes('alpha')) {
+    targetTypeKey = 'Beta';
+  }
+  const typeMatches = settings.notificationTypes.includes(targetTypeKey);
+
+  // Trace duplicate checking
+  let isDuplicate = false;
+  const incomingTitleClean = cleanTitleForMatching(cleanTitle);
+  const incomingPlatCanonical = getCanonicalPlatform(platform);
+  const rawLogs = await AsyncStorage.getItem('fgf_notification_logs_v2');
+  if (rawLogs) {
+    let logs = [];
+    try {
+      logs = JSON.parse(rawLogs);
+    } catch (e) {
+      console.warn('[NotificationService] Error parsing logs in testReceiveFCM:', e);
+    }
+    isDuplicate = logs.some((log: any) => {
+      const logTitleClean = cleanTitleForMatching(log.title);
+      const logPlatCanonical = getCanonicalPlatform(log.platform);
+      
+      const titleMatches = logTitleClean === incomingTitleClean;
+      const platformMatches = logPlatCanonical === incomingPlatCanonical;
+      
+      const timeDiff = Math.abs(Date.now() - (log.timestamp || 0));
+      const isRecent = timeDiff < 7 * 24 * 60 * 60 * 1000; // 7 days
+      
+      return titleMatches && platformMatches && isRecent;
+    });
+  }
+
+  const allowed = settings.notificationsEnabled && platformMatches && typeMatches && !isDuplicate;
+
+  if (allowed) {
+    await handleRemoteMessage(remoteMessage);
+    return `Allowed & Scheduled: "${mockRedditTitle}" (Platform Switch: ${platformMatches ? 'On' : 'Off'}, Type Switch: ${typeMatches ? 'On' : 'Off'})`;
+  } else if (isDuplicate) {
+    return `Blocked: "${mockRedditTitle}" (Reason: Duplicate / Already Notified)`;
+  } else {
+    return `Blocked: "${mockRedditTitle}" (Global Notifications: ${settings.notificationsEnabled ? 'On' : 'Off'}, Platform Switch: ${platformMatches ? 'On' : 'Off'}, Type Switch: ${typeMatches ? 'On' : 'Off'})`;
   }
 }
 
