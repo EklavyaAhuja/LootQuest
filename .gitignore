@@ -58,6 +58,7 @@ skills-lock.json
 
 # ─── Scratch / Dev notes / Test scripts ───────────────────────────────────────
 fixes.txt
+design.md
 scratch/
 scratch_*.js
 test_*.js
