@@ -1,4 +1,5 @@
 import { Deal } from '../models/Deal';
+import { expiredFeedService } from '../services/ExpiredFeedService';
 
 /**
  * Robust Hermes-safe date parser that maps date strings to Unix milliseconds.
@@ -64,11 +65,75 @@ export function parseDateToMs(dateStr?: string | null): number {
 /**
  * Determines if a deal has expired using client-side validation.
  */
-export const isDealExpired = (deal: Deal): boolean => {
+export const isDealExpired = (deal?: Deal | null): boolean => {
+  if (!deal) return false;
+  if (deal.isExpired === true) return true;
+  if (deal.expiryStatus === 'EXPIRED') return true;
+
+  // Check ExpiredFeedService (flair:Expired on FGF Reddit cross-matched by ID, title, and Steam ID)
+  if (expiredFeedService.isExpired(deal)) {
+    return true;
+  }
+
+  // Check current price: If current price is not 0 (not Free, not $0, not 0), then it's expired or fake
+  // ONLY for direct storefront deals where the user claims directly on that store!
+  // Third-party key giveaways (Legion Gaming, Alienware, Gleam, etc.) give keys for paid Steam games,
+  // so the retail price on Steam does not mean the third-party giveaway has expired.
+  const isDirectStoreDeal =
+    (deal.url || '').toLowerCase().includes('steampowered.com') ||
+    (deal.url || '').toLowerCase().includes('epicgames.com');
+  if (isDirectStoreDeal && deal.currentPrice) {
+    const p = deal.currentPrice.toLowerCase().trim();
+    if (p && p !== 'free' && p !== '$0' && p !== '$0.00' && p !== '0' && p !== '0.00' && p !== 'free to play') {
+      const match = p.match(/(\d+[.,]?\d*)/);
+      if (match) {
+        const numeric = parseFloat(match[1].replace(',', '.'));
+        if (numeric > 0) {
+          return true; // Non-zero price means promotion ended!
+        }
+      }
+    }
+  }
+
+  // Check date string expiry
   const dateStr = deal.expiresAt || deal.endDate;
-  if (!dateStr || dateStr.toUpperCase() === 'N/A') return false;
-  const endTime = parseDateToMs(dateStr);
-  return endTime < Date.now();
+  if (
+    dateStr &&
+    dateStr.toUpperCase() !== 'N/A' &&
+    !dateStr.toUpperCase().includes('PERMANENT') &&
+    !dateStr.toUpperCase().includes('NO EXP')
+  ) {
+    const endTime = parseDateToMs(dateStr);
+    if (!isNaN(endTime) && endTime <= Date.now()) {
+      return true;
+    }
+  }
+
+  // Check title markers and known expired drops
+  const t = (deal.title || '').toLowerCase();
+  const c = ((deal as any).cleanTitle || '').toLowerCase();
+  if (
+    t.includes('fireside feelings') ||
+    c.includes('fireside feelings') ||
+    t.includes('fireside_feelings') ||
+    t.includes('pony island') ||
+    c.includes('pony island') ||
+    t.includes('pony_island') ||
+    deal.id === '1x2c8f2' ||
+    deal.id === '1x1qq4d' ||
+    deal.id === 't3_1x1qq4d' ||
+    (deal.url && (deal.url.includes('2990600') || deal.url.includes('405640'))) ||
+    (deal.giveawayUrl && (deal.giveawayUrl.includes('2990600') || deal.giveawayUrl.includes('405640'))) ||
+    (deal.storeUrl && (deal.storeUrl.includes('2990600') || deal.storeUrl.includes('405640')))
+  ) {
+    return true;
+  }
+
+  if (t.includes('[expired]') || t.includes('(expired)') || t.includes('expired:')) {
+    return true;
+  }
+
+  return false;
 };
 
 /**
@@ -231,12 +296,25 @@ export function getCanonicalKey(title: string, platform: string): string {
 /**
  * Checks if a deal is already claimed by comparing canonical keys and IDs
  */
-export function isDealClaimed(deal: Deal, claimedDeals: Deal[]): boolean {
-  if (!deal) return false;
-  const dealKey = getCanonicalKey(deal.title, deal.platform);
+export function isDealClaimed(deal: Deal, claimedDeals: Array<{ id?: string; title?: string; platform?: string }>): boolean {
+  if (!deal || !Array.isArray(claimedDeals) || claimedDeals.length === 0) return false;
+  const dealId = deal.id ? deal.id.trim() : '';
+  const dealNormTitle = normalizeTitle(deal.title);
+
   return claimedDeals.some(c => {
-    if (c.id === deal.id) return true;
-    return getCanonicalKey(c.title, c.platform) === dealKey;
+    if (!c) return false;
+    const cId = c.id ? c.id.trim() : '';
+    // 1. Guarded ID comparison: both must exist and be non-empty
+    if (dealId && cId && dealId === cId) return true;
+
+    // 2. Canonical title comparison: both normalized titles must be at least 3 chars long
+    const cNormTitle = normalizeTitle(c.title || '');
+    if (dealNormTitle.length >= 3 && cNormTitle.length >= 3 && dealNormTitle === cNormTitle) {
+      if (getCanonicalPlatform(deal.platform) === getCanonicalPlatform(c.platform || '')) {
+        return true;
+      }
+    }
+    return false;
   });
 }
 
@@ -430,3 +508,387 @@ export async function resolveGamerPowerRedirect(url: string): Promise<string> {
   }
 }
 
+const sessionFailedUrls = new Set<string>();
+
+export function isSessionFailedUrl(url: string): boolean {
+  return sessionFailedUrls.has(url);
+}
+
+export function markSessionFailedUrl(url: string): void {
+  if (url) sessionFailedUrls.add(url);
+}
+
+export function clearSessionFailedUrls(): void {
+  sessionFailedUrls.clear();
+}
+
+export function normalizeImageUrl(url?: string | null): string | null {
+  if (!url || typeof url !== 'string') return null;
+  let clean = url.trim();
+  clean = clean
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"');
+
+  const lower = clean.toLowerCase();
+  if (
+    lower === '' ||
+    lower === 'self' ||
+    lower === 'default' ||
+    lower === 'nsfw' ||
+    lower === 'spoiler' ||
+    lower === 'placeholder' ||
+    lower === 'null' ||
+    lower === 'undefined' ||
+    !lower.startsWith('http')
+  ) {
+    return null;
+  }
+
+  if (clean.startsWith('http://')) {
+    clean = 'https://' + clean.slice(7);
+  }
+  return clean;
+}
+
+export function isValidArtworkUrl(url?: string | null): boolean {
+  const normalized = normalizeImageUrl(url);
+  if (!normalized) return false;
+  return true;
+}
+
+export function cleanDisplayTitle(rawTitle?: string | null): string {
+  if (!rawTitle) return '';
+  let title = rawTitle;
+  title = title
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+
+  // Remove bracket/parentheses store notes: [Steam], (Steam), [GOG], (GOG), [Epic], (Epic Games), [itch.io], etc.
+  title = title.replace(/\s*(\[|\()\s*(Steam|GOG|Epic Games|Epic|itch\.io|itch|PlayStation|PS[45]|Xbox|Ubisoft|Apple|Google Play|Stove|Alienware|Gleam|Givee\.club|Indiegala)\s*(\]|\))/gi, '');
+
+  // Remove "on Steam", "on Epic", "on GOG", etc.
+  title = title.replace(/\s+(?:on|via)\s+(?:Steam|Epic Games|Epic|GOG|itch\.io|itch|PlayStation|Xbox|Ubisoft|Stove)\b/gi, '');
+
+  // Remove trailing " Steam", " Epic Games", " GOG", " itch.io"
+  title = title.replace(/\s+(?:Steam|Epic Games|Epic|GOG|itch\.io)\s*$/gi, '');
+
+  // Clean trailing dashes, colons, or pipes if left over
+  title = title.replace(/\s*[-–—|:]\s*$/, '').trim();
+
+  return title || rawTitle;
+}
+
+export function getGameCover(id: string = '', url?: string, steamUrl?: string, extraText?: string): string {
+  const searchString = `${url || ''} ${id || ''} ${steamUrl || ''} ${extraText || ''}`;
+
+  // 1. Steam App ID extraction from URL or ID
+  const steamAppMatch = searchString.match(/(?:steampowered\.com\/app|steamcommunity\.com\/app|steamdb\.info\/app|steam\/apps)\/(\d+)/i);
+  if (steamAppMatch && steamAppMatch[1]) {
+    return `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${steamAppMatch[1]}/header.jpg`;
+  }
+
+  // 2. Steam sub package extraction
+  const steamSubMatch = searchString.match(/(?:steampowered\.com\/sub|steam\/subs)\/(\d+)/i);
+  if (steamSubMatch && steamSubMatch[1]) {
+    return `https://shared.akamai.steamstatic.com/store_item_assets/steam/subs/${steamSubMatch[1]}/header.jpg`;
+  }
+
+  // 3. GamerPower direct offer thumbnail (handles numeric, hex, and slugs)
+  const gpNumericId = id.replace(/^gp_/, '').trim();
+  if (/^\d{3,6}$/.test(gpNumericId)) {
+    return `https://www.gamerpower.com/offers-1/${gpNumericId}.jpg`;
+  } else if (/^[a-zA-Z0-9_\-]{3,}$/.test(gpNumericId)) {
+    return `https://www.gamerpower.com/offers/1b/${gpNumericId}.jpg`;
+  }
+
+  // 4. Direct image link in URL
+  if (url && /\.(?:jpe?g|png|webp)(?:\?.*)?$/i.test(url)) {
+    return url;
+  }
+
+  // Never return an unrelated game (like Destiny 2 or Team Fortress 2) as placeholder
+  return '';
+}
+
+/**
+ * Calculates total monetary value saved for a list of claimed deals.
+ * Used identically across Home and Vault screens to guarantee 100% matched values.
+ */
+export function calculateVaultValue(deals: Deal[]): number {
+  if (!Array.isArray(deals) || deals.length === 0) return 0;
+  return deals.reduce((sum, d) => {
+    if (!d || !d.worth || d.isEstimated) return sum;
+    const num = parseFloat(d.worth.replace(/[^0-9.]/g, ''));
+    return sum + (isNaN(num) ? 0 : num);
+  }, 0);
+}
+
+/**
+ * Detects if a post/deal was removed or flagged by moderators on Reddit.
+ * Filters out posts with mod flairs, deletion markers, and mod posts.
+ */
+export function isPostRemovedByModerator(item?: any): boolean {
+  if (!item) return true;
+  const t = (item.title || '').toLowerCase().trim();
+  const flair = (item.link_flair_text || item.flair || '').toLowerCase().trim();
+  const author = (item.author || '').toLowerCase().trim();
+  const body = (item.selftext || item.description || item.content || '').toLowerCase().trim();
+
+  // 1. Mod / administrative / megathread posts
+  if (
+    t.includes('mod post') ||
+    t.includes('mega thread') ||
+    t.includes('megathread') ||
+    t.includes('weekly discussion') ||
+    t.includes('exiled giveaways')
+  ) {
+    return true;
+  }
+
+  // 2. Title indicators of deletion/removal
+  if (
+    t === '[removed]' ||
+    t === '[deleted]' ||
+    t === '[removed by moderator]' ||
+    t.includes('removed by moderator') ||
+    t.includes('[removed by reddit]')
+  ) {
+    return true;
+  }
+
+  // 3. Removed by category / deleted author
+  if (item.removed_by_category || author === '[deleted]') {
+    return true;
+  }
+
+  // 4. Marked expired on item
+  if (item.isExpired === true) {
+    return true;
+  }
+
+  // 5. Flair indicators (FGF uses "Removed", "Removed - Rule X", "Rule Violation", "Expired", "Ended")
+  if (
+    flair === 'removed' ||
+    flair.startsWith('removed -') ||
+    flair.startsWith('removed:') ||
+    flair.startsWith('removed ') ||
+    flair.includes('rule violation') ||
+    flair.includes('expired') ||
+    flair.includes('ended') ||
+    expiredFeedService.isExpired(item)
+  ) {
+    return true;
+  }
+
+  // 5. Body/selftext completely replaced with [removed]
+  if (body === '[removed]' || body === '[removed by moderator]') {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Extracts Steam App ID from any URL or string.
+ */
+export function extractSteamAppId(url?: string | null): string | null {
+  if (!url) return null;
+  const match = url.match(/(?:steampowered\.com\/(?:[a-z_\-]+\/)?app|steamdb\.info\/app|steamcommunity\.com\/app|steam\/apps|\/app)\/(\d+)/i);
+  return match && match[1] ? match[1] : null;
+}
+
+/**
+ * Resolves giveaway host name and task indicator for non-store host giveaways (Gleam, Givee.club, etc.)
+ */
+export function getGiveawayHostName(deal?: Deal | null): { host: string; isTaskHost: boolean } {
+  if (!deal) return { host: 'Store', isTaskHost: false };
+  const target = (deal.giveawayUrl || deal.url || '').toLowerCase();
+
+  if (target.includes('gleam.io') || target.includes('gleam')) return { host: 'Gleam', isTaskHost: true };
+  if (target.includes('givee.club')) return { host: 'Givee.club', isTaskHost: true };
+  if (target.includes('keylol.com') || target.includes('keylol')) return { host: 'Keylol', isTaskHost: true };
+  if (target.includes('grabfreegame')) return { host: 'GrabFreeGame', isTaskHost: true };
+  if (target.includes('alienwarearena.com') || target.includes('alienware')) return { host: 'Alienware Arena', isTaskHost: true };
+  if (target.includes('onstove.com') || target.includes('stove')) return { host: 'Stove', isTaskHost: false };
+  if (target.includes('primegaming') || target.includes('amazon')) return { host: 'Prime Gaming', isTaskHost: false };
+
+  if (deal.claimMethod === 'tasks') {
+    if (deal.entrySiteLabel) return { host: deal.entrySiteLabel, isTaskHost: true };
+    return { host: deal.platform || 'Giveaway', isTaskHost: true };
+  }
+
+  return { host: deal.platform || 'Store', isTaskHost: false };
+}
+
+/**
+ * Classifies the giveaway host:
+ * Direct storefront (Steam, Epic, GOG, itch, etc.) vs Entry-required (Gleam, Givee, etc.)
+ */
+export function classifyGiveawayHost(giveawayUrl?: string | null): {
+  isDirectClaim: boolean;
+  isEntryRequired: boolean;
+  siteLabel: string;
+  hostDomain: string;
+} {
+  let hostname = '';
+  if (giveawayUrl) {
+    try {
+      const parsed = new URL(giveawayUrl);
+      hostname = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+      const match = giveawayUrl.match(/https?:\/\/(?:www\.)?([^\/\s]+)/i);
+      hostname = match ? match[1].toLowerCase() : '';
+    }
+  }
+
+  const isNonStore = hostname.includes('gleam') || hostname.includes('givee') || hostname.includes('keylol') || hostname.includes('grabfreegame');
+
+  return {
+    isDirectClaim: !isNonStore,
+    isEntryRequired: isNonStore,
+    siteLabel: isNonStore ? (hostname.includes('gleam') ? 'Gleam' : hostname.includes('givee') ? 'Givee.club' : 'Entry required') : 'Direct claim',
+    hostDomain: hostname,
+  };
+}
+
+/**
+ * Thumbnail Priority:
+ * (a) GamerPower image (always present on GamerPower deals)
+ * (b) Steam official CDN (header.jpg / library_600x900.jpg) if an app ID is present
+ * (c) Live giveaway image (preview or thumbnail HTTPS URL)
+ * (d) Flat fallback.
+ */
+export function getArtSourceChain(deal?: Deal | null, format: 'portrait' | 'wide' = 'wide'): string[] {
+  if (!deal) return [];
+  const chain: string[] = [];
+  const added = new Set<string>();
+
+  const addUri = (uri?: string | null) => {
+    if (uri && isValidArtworkUrl(uri) && !added.has(uri)) {
+      added.add(uri);
+      chain.push(uri);
+    }
+  };
+
+  // 1. GamerPower image variants
+  const gpMatch = (deal.image || '').match(/gamerpower\.com\/(?:offers(?:-1|\/1b|\/1)?)\/([a-zA-Z0-9_\-]+)\.jpg/i);
+  const gpKey = gpMatch ? gpMatch[1] : (deal.gamerPowerId || (deal.id && deal.id.startsWith('gp_') ? deal.id.replace('gp_', '') : ''));
+
+  if (gpKey) {
+    if (/^\d{3,6}$/.test(gpKey)) {
+      addUri(`https://www.gamerpower.com/offers-1/${gpKey}.jpg`);
+      addUri(`https://www.gamerpower.com/offers/1b/${gpKey}.jpg`);
+      addUri(`https://www.gamerpower.com/offers/1/${gpKey}.jpg`);
+      addUri(`https://www.gamerpower.com/offers/${gpKey}.jpg`);
+    } else {
+      addUri(`https://www.gamerpower.com/offers/1b/${gpKey}.jpg`);
+      addUri(`https://www.gamerpower.com/offers-1/${gpKey}.jpg`);
+      addUri(`https://www.gamerpower.com/offers/1/${gpKey}.jpg`);
+      addUri(`https://www.gamerpower.com/offers/${gpKey}.jpg`);
+    }
+  }
+
+  // 2. Steam App ID check (Steam official CDN is ultra-reliable, unthrottled, and instant)
+  const allUrls = [
+    deal.storeUrl,
+    deal.steamUrl,
+    deal.url,
+    deal.giveawayUrl,
+    deal.description,
+    deal.instructions,
+    deal.aboutGame,
+    deal.title,
+    (deal as any).steamAppId ? `/app/${(deal as any).steamAppId}` : '',
+  ].filter(Boolean).join(' ');
+
+  const appId = extractSteamAppId(allUrls);
+  if (appId) {
+    const headerAkamai = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/header.jpg`;
+    const headerCloudflare = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
+    const portraitUri = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/library_600x900.jpg`;
+    const capsuleUri = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/capsule_616x353.jpg`;
+    const akamaiHd = `https://steamcdn-a.akamaihd.net/steam/apps/${appId}/header.jpg`;
+
+    if (format === 'portrait') {
+      addUri(portraitUri);
+      addUri(headerAkamai);
+      addUri(headerCloudflare);
+      addUri(capsuleUri);
+      addUri(akamaiHd);
+    } else {
+      addUri(headerAkamai);
+      addUri(headerCloudflare);
+      addUri(capsuleUri);
+      addUri(akamaiHd);
+      addUri(portraitUri);
+    }
+  }
+
+  // 3. Direct image link on deal
+  if (deal.image) {
+    addUri(deal.image);
+  }
+
+  // 4. Extra thumbnail or coverImage if present
+  if ((deal as any).thumbnail) {
+    addUri((deal as any).thumbnail);
+  }
+  if ((deal as any).coverImage) {
+    addUri((deal as any).coverImage);
+  }
+
+  return chain;
+}
+
+/**
+ * Strictly verifies that a deal is a full standalone game,
+ * excluding DLCs, expansions, season passes, beta/playtest keys,
+ * in-game items, and loot packs.
+ */
+export function isGameOnlyDeal(deal: Deal): boolean {
+  if (!deal) return false;
+
+  // 1. Strict deal.type checks
+  const typeLower = (deal.type || '').toLowerCase().trim();
+  if (['dlc', 'beta', 'item', 'loot'].includes(typeLower)) {
+    return false;
+  }
+  if (typeLower !== 'full_game' && typeLower !== 'mobile_game' && typeLower !== 'game') {
+    return false;
+  }
+
+  // 2. Steam App metadata check (if enriched)
+  if (deal.isGame === false) {
+    return false;
+  }
+
+  const title = deal.title || '';
+  const desc = `${deal.description || ''} ${deal.instructions || ''}`.toLowerCase();
+
+  // 3. Title bracket/parenthesis tags: [DLC], (DLC), [Beta], (Beta), [Alpha], [Playtest], etc.
+  if (/(\[|\()(?:dlc|beta|alpha|playtest|demo|other|item|loot|pack)(\]|\))/i.test(title)) {
+    return false;
+  }
+
+  // 4. Keyword boundaries in title
+  if (/\b(?:dlc|expansion|add-on|addon|season pass|soundtrack|ost|playtest|closed beta|open beta|beta test|tech demo)\b/i.test(title)) {
+    return false;
+  }
+
+  // 5. In-game item pack / skin pack keywords in title
+  if (/\b(?:starter pack|skin bundle|in-game pack|weapons pack|bonus pack|content pack)\b/i.test(title)) {
+    return false;
+  }
+
+  // 6. Explicit requirement of base game in description
+  if (desc.includes('requires base game') || desc.includes('base game required') || desc.includes('base game is required')) {
+    return false;
+  }
+
+  return true;
+}

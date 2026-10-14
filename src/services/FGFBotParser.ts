@@ -18,6 +18,7 @@ export interface ParsedBotData {
   parserConfidence: number;
   isFullyFree: boolean | null; // Flag to indicate if the deal is 100% off
   storeUrl: string | null;     // Direct Steam/GOG store page URL from bot navigation line
+  giveawayUrl: string | null;  // Direct third-party giveaway claim URL (GiveeClub, Gleam, etc.)
 }
 
 /**
@@ -289,7 +290,7 @@ function isStructuredLabelLine(line: string): boolean {
  * Collect everything else before the "Price:" line.
  */
 function extractAboutGame(lines: string[]): string | null {
-  const cleanLines = lines.map(line => line.trim());
+  const cleanLines = lines.map(line => line.replace(/^[•\s*\-+\u2022\u00B7]+\s*/, '').trim());
   const navIndex = findNavigationLineIndex(cleanLines);
 
   const descLines: string[] = [];
@@ -300,14 +301,20 @@ function extractAboutGame(lines: string[]): string | null {
     const trimmed = cleanLines[i];
     if (!trimmed) continue;
 
-    // Stop collecting once we hit the Price: line
+    // Stop collecting once we hit the Price: or metadata lines
     const lower = trimmed.toLowerCase();
-    if (lower.startsWith('price:')) {
+    if (
+      lower.startsWith('price:') ||
+      lower.startsWith('release date:') ||
+      lower.startsWith('developer:') ||
+      lower.startsWith('genre/tags:') ||
+      lower.startsWith('has ')
+    ) {
       break;
     }
 
     // Skip navigation/separator lines (contain | or are just punctuation)
-    if (trimmed.includes('|')) continue;
+    if (trimmed.includes('|') && !trimmed.toLowerCase().includes('reviews:')) continue;
 
     // Skip labeled metadata lines
     if (isStructuredLabelLine(trimmed)) continue;
@@ -321,7 +328,7 @@ function extractAboutGame(lines: string[]): string | null {
       /^https?:\/\//.test(trimmed)
     ) continue;
 
-    // Skip the very first non-skipped line — that is the game title
+    // Skip the very first non-skipped line — that is the game title if not already skipped
     if (!titleSkipped) {
       titleSkipped = true;
       continue;
@@ -383,7 +390,6 @@ function extractInstructions(lines: string[]): string | null {
 
 export function parseBotComment(botComment: string): ParsedBotData {
   let matchedFields = 0;
-  const totalFields = 10; // title, price, originalPrice, expiresAt, releaseDate, developer, genres, achievements, tradingCards, reviewScore/steamDbRating
 
   // Clean markdown asterisks to make parsing robust
   const cleanComment = botComment.replace(/\*/g, '');
@@ -400,14 +406,21 @@ export function parseBotComment(botComment: string): ParsedBotData {
   const instructions = extractInstructions(lines);
 
   // 3b. Extract store URL from pipe-separated navigation line
-  // FGF_Info_Bot includes a line like: "Store Page | Community Hub | SteamDB"
-  // The actual links are in the raw (non-stripped) comment as markdown: [Store Page](https://store.steampowered.com/app/...)
   let storeUrl: string | null = null;
   const storeUrlMatch = botComment.match(/\[(?:Store Page|store page)[^\]]*\]\(([^)]+)\)/i) ||
                          botComment.match(/(https?:\/\/store\.steampowered\.com\/app\/\d+[^\s)"']*)/i) ||
                          botComment.match(/(https?:\/\/www\.gog\.com\/[^\s)"']*game[^\s)"']*)/i);
   if (storeUrlMatch) {
     storeUrl = storeUrlMatch[1].trim();
+  }
+
+  // 3c. Extract direct third-party giveaway host URL (GiveeClub, Gleam, Giveaway.su, Alienware, etc.)
+  let giveawayUrl: string | null = null;
+  const giveawayMatch =
+    botComment.match(/(?:hosted by|giveaway details|link)[^)\n]*?(https?:\/\/(?:www\.)?(?:gleam\.io|givee\.club|giveaway\.su|alienwarearena\.com|amdgaming\.com|keylol\.com|opquest\.com|bananatic\.com|grabfreegame\.com|gamehag\.com|vloot\.io|indiegala\.com|hitmarker\.net|woovit\.com)[^\s\)\>\]'"]*)/i) ||
+    botComment.match(/(https?:\/\/(?:www\.)?(?:gleam\.io|givee\.club|giveaway\.su|alienwarearena\.com|amdgaming\.com|keylol\.com|opquest\.com|bananatic\.com|grabfreegame\.com|gamehag\.com|vloot\.io|indiegala\.com|hitmarker\.net|woovit\.com)[^\s\)\>\]'"]*)/i);
+  if (giveawayMatch) {
+    giveawayUrl = (giveawayMatch[1] || giveawayMatch[0]).trim();
   }
 
   // Parse fields line-by-line
@@ -423,18 +436,18 @@ export function parseBotComment(botComment: string): ParsedBotData {
   let steamDbRating: string | null = null;
   let isFullyFree: boolean | null = null;
 
-  // Logging variables
-  let priceLine: string | null = null;
+  const totalFields = 10;
   let expiryMatch: any = null;
   let expiryText: string | null = null;
   let releaseDateMatch: any = null;
 
-  for (const line of lines) {
+  for (const rawLine of lines) {
+    // Strip leading bullets (•, *, -, ·)
+    const line = rawLine.replace(/^[•\s*\-+\u2022\u00B7]+\s*/, '').trim();
     const lowerLine = line.toLowerCase();
 
     // A. Price & Expiry
     if (lowerLine.startsWith('price:')) {
-      priceLine = line;
       const priceText = line.substring(6).trim();
 
       // Original price extraction (e.g. $19.99)
@@ -572,6 +585,7 @@ export function parseBotComment(botComment: string): ParsedBotData {
     parserConfidence,
     isFullyFree,
     storeUrl,
+    giveawayUrl,
   };
 }
 

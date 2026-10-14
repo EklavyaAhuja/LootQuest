@@ -1,4 +1,5 @@
 import { Deal } from '../models/Deal';
+import { isDealExpired } from '../utils/dealUtils';
 
 /**
  * Normalizes title for comparing duplicates
@@ -179,6 +180,10 @@ export function filterDeals(
 
 // Helper to combine best data from both versions
 const enrichDeal = (base: Deal, extra: Deal): Deal => {
+  const mergedEndDate = base.endDate || extra.endDate;
+  const mergedExpiresAt = base.expiresAt || extra.expiresAt;
+  const expired = base.isExpired || extra.isExpired || isDealExpired(base) || isDealExpired(extra);
+
   return {
     ...base,
     // Take better data from Reddit if missing in GamerPower
@@ -192,8 +197,10 @@ const enrichDeal = (base: Deal, extra: Deal): Deal => {
     tradingCards: base.tradingCards || extra.tradingCards,
     reviewScore: base.reviewScore || extra.reviewScore,
     steamDbRating: base.steamDbRating || extra.steamDbRating,
-    expiresAt: base.expiresAt || extra.expiresAt,
-    expiryStatus: (base.expiryStatus && base.expiryStatus !== 'UNKNOWN') ? base.expiryStatus : extra.expiryStatus,
+    endDate: mergedEndDate,
+    expiresAt: mergedExpiresAt,
+    isExpired: expired,
+    expiryStatus: expired ? 'EXPIRED' : ((base.expiryStatus && base.expiryStatus !== 'UNKNOWN') ? base.expiryStatus : extra.expiryStatus),
     image: base.image || extra.image,
     createdAt: base.createdAt || extra.createdAt,
     redditUrl: base.redditUrl || extra.redditUrl || extra.url,

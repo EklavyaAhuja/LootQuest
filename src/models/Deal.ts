@@ -21,6 +21,9 @@ export interface Deal {
   tradingCards?: number;
   reviewScore?: string;
   steamDbRating?: string;
+  steamRatingPercent?: number;
+  steamReviewCount?: number;
+  steamUrl?: string;
   parserConfidence?: number; // diagnostic metric
   isNsfw?: boolean;
   createdAt?: number; // Unix timestamp in milliseconds
@@ -30,8 +33,24 @@ export interface Deal {
   claimedUsers?: number;
   worth?: string;
   endDate?: string | null;
-  platforms?: string[];
+  giveawayUrl?: string; // The real giveaway link (Gleam, Givee.club, store, etc.)
+  storeUrl?: string;    // Steam / Epic / GOG store page used for metadata & Steam icon
+  publisher?: string;
+  isEntryRequired?: boolean;
+  entrySiteLabel?: string;
   isExpired?: boolean;
   timeLeft?: string;
+  platforms?: string[];
+  isEstimated?: boolean;
+  isGame?: boolean;
+  resolvedImage?: string;
+  resolvedPoster?: string;
+  resolvedSource?: 'steam' | 'epic' | 'gamerpower' | 'reddit' | 'fallback';
+  redditOriginalImage?: string;
+  is18Plus?: boolean;
+  steamAppId?: string;
+  screenshots?: Array<{ id: number; path_thumbnail: string; path_full: string }>;
+  bannerImage?: string;
+  fullDescription?: string;
 }
 

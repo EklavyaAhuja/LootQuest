@@ -13,15 +13,34 @@ export interface AppSettings {
   backgroundIntervalMinutes: number; // e.g. 15, 30, 60
   theme: 'cartoon-classic' | 'cartoon-dark' | 'cartoon-pastel';
   redditClientId?: string; // Optional client id for authenticated requests
+  hasMigratedToAllEnabledV3?: boolean;
+  anonymousUsageCount: boolean; // e.g. default true
 }
+
+export const DEFAULT_NOTIFICATION_PLATFORMS = [
+  'Steam',
+  'Epic Games',
+  'GOG',
+  'itch.io',
+  'Ubisoft',
+  'Stove',
+  'Alienware Arena',
+  'Prime Gaming',
+  'Playstation',
+  'Xbox',
+];
+
+export const DEFAULT_NOTIFICATION_TYPES = ['Game', 'DLC', 'Beta'];
 
 const DEFAULT_SETTINGS: AppSettings = {
   notificationsEnabled: true,
-  notificationPlatforms: [],
-  notificationTypes: ['Game'], // default only notify for full games
+  notificationPlatforms: [...DEFAULT_NOTIFICATION_PLATFORMS],
+  notificationTypes: [...DEFAULT_NOTIFICATION_TYPES],
   backgroundIntervalMinutes: 30,
   theme: 'cartoon-classic',
   redditClientId: '',
+  hasMigratedToAllEnabledV3: true,
+  anonymousUsageCount: true,
 };
 
 /**
@@ -54,7 +73,7 @@ export async function saveRedditAccessToken(token: string, expiresSeconds: numbe
 }
 
 // Gemini API storage functions removed
-
+ 
 /**
  * APP SETTINGS
  */
@@ -64,18 +83,33 @@ export async function getAppSettings(): Promise<AppSettings> {
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw);
     
-    // Migration: if notificationPlatforms is missing or empty, default to ALL platforms
-    // because in the old version, empty meant "all".
-    if (!parsed.hasOwnProperty('notificationPlatforms') || !Array.isArray(parsed.notificationPlatforms) || parsed.notificationPlatforms.length === 0) {
+    let migrated = false;
+    
+    // Migration: Ensure all platforms and filters are checked for existing users upgrade
+    if (!parsed.hasMigratedToAllEnabledV3) {
       parsed.notificationPlatforms = [...DEFAULT_SETTINGS.notificationPlatforms];
-    }
-    
-    // Migration: if notificationTypes is missing or empty, default to all types
-    if (!parsed.hasOwnProperty('notificationTypes') || !Array.isArray(parsed.notificationTypes) || parsed.notificationTypes.length === 0) {
       parsed.notificationTypes = [...DEFAULT_SETTINGS.notificationTypes];
+      parsed.hasMigratedToAllEnabledV3 = true;
+      migrated = true;
     }
     
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    // Fallback: only if notificationPlatforms was never initialized
+    if (!parsed.hasOwnProperty('notificationPlatforms') || !Array.isArray(parsed.notificationPlatforms)) {
+      parsed.notificationPlatforms = [...DEFAULT_SETTINGS.notificationPlatforms];
+      migrated = true;
+    }
+    
+    // Fallback: only if notificationTypes was never initialized
+    if (!parsed.hasOwnProperty('notificationTypes') || !Array.isArray(parsed.notificationTypes)) {
+      parsed.notificationTypes = [...DEFAULT_SETTINGS.notificationTypes];
+      migrated = true;
+    }
+    
+    const finalSettings = { ...DEFAULT_SETTINGS, ...parsed };
+    if (migrated) {
+      await saveAppSettings(finalSettings);
+    }
+    return finalSettings;
   } catch (e) {
     console.error('Error reading app settings:', e);
     return DEFAULT_SETTINGS;
@@ -115,23 +149,54 @@ export async function addSeenPosts(postIds: string[]): Promise<void> {
   }
 }
 
+import { cleanDisplayTitle } from '../utils/dealUtils';
+
 /**
  * CLAIMED AND TRACKED GAMES STORAGE (For Vault Screen)
  */
 export async function getClaimedPosts(): Promise<RedditPost[]> {
   try {
     const raw = await AsyncStorage.getItem('fgf_claimed_posts');
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) return [];
+
+    // Deduplicate by clean title and id
+    const seen = new Set<string>();
+    const deduped: any[] = [];
+    for (const item of list) {
+      if (!item) continue;
+      const cleanKey = cleanDisplayTitle(item.title || item.cleanTitle || '').toLowerCase().trim();
+      const idKey = item.id ? String(item.id).trim() : '';
+      const key = cleanKey || idKey;
+      if (!key) continue;
+      if (seen.has(key) || (idKey && seen.has(idKey))) {
+        continue;
+      }
+      seen.add(key);
+      if (idKey) seen.add(idKey);
+      deduped.push(item);
+    }
+    if (deduped.length !== list.length) {
+      AsyncStorage.setItem('fgf_claimed_posts', JSON.stringify(deduped)).catch(() => {});
+    }
+    return deduped;
   } catch (e) {
     console.error('Error reading claimed posts:', e);
     return [];
   }
 }
 
-export async function addClaimedPost(post: RedditPost): Promise<void> {
+export async function addClaimedPost(post: RedditPost | any): Promise<void> {
   try {
     const current = await getClaimedPosts();
-    if (current.some(p => p.id === post.id)) return;
+    const postTitle = cleanDisplayTitle(post.title || post.cleanTitle || '').toLowerCase().trim();
+    const exists = current.some((p: any) => {
+      if (p.id && post.id && p.id === post.id) return true;
+      const pTitle = cleanDisplayTitle(p.title || p.cleanTitle || '').toLowerCase().trim();
+      return postTitle && pTitle && pTitle === postTitle;
+    });
+    if (exists) return;
     const updated = [post, ...current];
     await AsyncStorage.setItem('fgf_claimed_posts', JSON.stringify(updated));
   } catch (e) {
@@ -139,13 +204,41 @@ export async function addClaimedPost(post: RedditPost): Promise<void> {
   }
 }
 
-export async function removeClaimedPost(postId: string): Promise<void> {
+export async function removeClaimedPost(postId: string, title?: string): Promise<void> {
   try {
     const current = await getClaimedPosts();
-    const updated = current.filter(p => p.id !== postId);
+    const cleanTargetTitle = (title || '').toLowerCase().trim();
+    const updated = current.filter((p: any) => {
+      if (p.id && postId && p.id === postId) return false;
+      if (cleanTargetTitle && (p.title || p.cleanTitle || '').toLowerCase().trim() === cleanTargetTitle) return false;
+      return true;
+    });
     await AsyncStorage.setItem('fgf_claimed_posts', JSON.stringify(updated));
   } catch (e) {
     console.error('Error removing claimed post:', e);
+  }
+}
+
+export async function updateClaimedPostDetails(postId: string, updates: { image?: string; worth?: string }): Promise<void> {
+  try {
+    const current = await getClaimedPosts();
+    let hasChanges = false;
+    const updated = current.map((p: any) => {
+      if (p.id === postId) {
+        hasChanges = true;
+        return {
+          ...p,
+          ...(updates.image && updates.image !== 'placeholder' ? { image: updates.image, coverImage: updates.image } : {}),
+          ...(updates.worth ? { worth: updates.worth } : {}),
+        };
+      }
+      return p;
+    });
+    if (hasChanges) {
+      await AsyncStorage.setItem('fgf_claimed_posts', JSON.stringify(updated));
+    }
+  } catch (e) {
+    console.error('Error updating claimed post details:', e);
   }
 }
 

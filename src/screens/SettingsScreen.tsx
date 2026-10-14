@@ -1,436 +1,419 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
   View,
-  TextInput,
   ScrollView,
-  Switch,
-  Alert,
-  Platform,
-  TouchableOpacity,
+  TextInput,
+  Pressable,
   Linking,
 } from 'react-native';
-import { COLORS, FONTS, getPlatformColor } from '../theme/theme';
-import appJson from '../../app.json';
-const appVersion = appJson.expo.version;
-import {
-  getAppSettings,
-  saveAppSettings,
-  AppSettings,
-} from '../services/storageService';
-import {
-  registerBackgroundFetch,
-  unregisterBackgroundFetch,
-  testReceiveFCM,
-} from '../services/notificationService';
-import {
-  Bell,
-  Clock,
-  SlidersHorizontal,
-  MessageCircle,
-  Check,
-  Gamepad2,
-} from 'lucide-react-native';
+import { COLORS, FONTS, RADIUS } from '../theme/theme';
+import { getAppSettings, saveAppSettings, AppSettings } from '../services/storageService';
+import { registerBackgroundFetch } from '../services/notificationService';
+import { getSavedName, saveName } from './OnboardingScreen';
 import StoreIcon from '../components/StoreIcon';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { dealsStore } from '../services/dealsStore';
 
-const ALL_PLATFORMS = ['Steam', 'Epic Games', 'GOG', 'itch.io', 'Playstation', 'Xbox', 'Other'];
-const ALL_TYPES = [
-  { key: 'Game', label: 'Full Games' },
-  { key: 'DLC', label: 'DLCs' },
-  { key: 'Beta', label: 'Betas' },
-];
-const INTERVALS = [
-  { mins: 15, label: 'Every 15 Minutes' },
-  { mins: 30, label: 'Every 30 Minutes' },
-  { mins: 60, label: 'Every 1 Hour' },
+interface SettingsScreenProps {
+  userName?: string;
+  onUpdateUserName?: (name: string) => void;
+}
+
+const ALL_PLATFORMS = [
+  'Steam',
+  'Epic Games',
+  'GOG',
+  'itch.io',
+  'Ubisoft',
+  'Stove',
+  'Alienware Arena',
+  'Prime Gaming',
+  'Playstation',
+  'Xbox',
 ];
 
-export default function SettingsScreen() {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [feedback, setFeedback] = useState('');
+const CATEGORIES = [
+  { key: 'Game', label: 'Game' },
+  { key: 'DLC', label: 'DLC' },
+  { key: 'Beta', label: 'Beta' },
+];
+
+// ─── Custom Prototype Switch: on = white track with black knob ───────────────
+function PrototypeSwitch({
+  value,
+  onToggle,
+}: {
+  value: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onToggle}
+      style={[styles.switchTrack, value && styles.switchTrackOn]}
+    >
+      <View style={[styles.switchThumb, value && styles.switchThumbOn]} />
+    </Pressable>
+  );
+}
+
+export default function SettingsScreen({
+  userName,
+  onUpdateUserName,
+}: SettingsScreenProps = {}) {
+  const [settings, setSettings] = useState<AppSettings>({
+    notificationsEnabled: true,
+    notificationPlatforms: ['Steam', 'Epic Games', 'GOG', 'itch.io', 'Playstation', 'Xbox'],
+    notificationTypes: ['Game', 'DLC', 'Beta'],
+    backgroundIntervalMinutes: 30,
+    theme: 'cartoon-classic',
+    anonymousUsageCount: true,
+  });
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+  const [feedbackSending, setFeedbackSending] = useState(false);
+
+  // 18+ Content Preferences (Item 6)
+  const [alwaysShow18Plus, setAlwaysShow18Plus] = useState(() => dealsStore.getAlwaysShow18Plus());
 
   useEffect(() => {
-    const loadData = async () => {
-      const savedSettings = await getAppSettings();
-      setSettings(savedSettings);
-    };
-    loadData();
+    setAlwaysShow18Plus(dealsStore.getAlwaysShow18Plus());
+    const unsub = dealsStore.subscribe(() => {
+      setAlwaysShow18Plus(dealsStore.getAlwaysShow18Plus());
+    });
+    return () => unsub();
   }, []);
 
-  const handleNotificationsEnabledToggle = async () => {
-    if (!settings) return;
-    const updated = { ...settings, notificationsEnabled: !settings.notificationsEnabled };
-    setSettings(updated);
-    await saveAppSettings(updated);
+  const handleToggleAlwaysShow18Plus = () => {
+    const nextVal = !alwaysShow18Plus;
+    setAlwaysShow18Plus(nextVal);
+    dealsStore.setAlwaysShow18Plus(nextVal);
   };
 
-  const handlePlatformToggle = async (plat: string) => {
-    if (!settings) return;
-    let plats = [...settings.notificationPlatforms];
-    if (plats.includes(plat)) {
-      plats = plats.filter(p => p !== plat);
+  // Profile Name Edit State
+  const [currentName, setCurrentName] = useState(userName || 'Hunter');
+  const [editingName, setEditingName] = useState(userName || 'Hunter');
+  const [nameSaved, setNameSaved] = useState(false);
+
+  useEffect(() => {
+    if (userName) {
+      setCurrentName(userName);
+      setEditingName(userName);
     } else {
-      plats.push(plat);
+      getSavedName().then((n) => {
+        if (n) {
+          setCurrentName(n);
+          setEditingName(n);
+        }
+      });
     }
-    const updated = { ...settings, notificationPlatforms: plats };
-    setSettings(updated);
-    await saveAppSettings(updated);
-    if (settings.notificationsEnabled) {
-      await registerBackgroundFetch();
-    }
+  }, [userName]);
+
+  const handleSaveName = async () => {
+    const trimmed = editingName.trim();
+    if (!trimmed) return;
+    await saveName(trimmed);
+    setCurrentName(trimmed);
+    onUpdateUserName?.(trimmed);
+    setNameSaved(true);
+    setTimeout(() => setNameSaved(false), 2000);
   };
 
-  const handleTypeToggle = async (type: string) => {
-    if (!settings) return;
-    let types = [...settings.notificationTypes];
-    if (types.includes(type)) {
-      types = types.filter(t => t !== type);
-    } else {
-      types.push(type);
-    }
-    const updated = { ...settings, notificationTypes: types };
-    setSettings(updated);
-    await saveAppSettings(updated);
-    if (settings.notificationsEnabled) {
-      await registerBackgroundFetch();
-    }
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    const loaded = await getAppSettings();
+    setSettings(loaded);
   };
 
-  const handleIntervalChange = async (mins: number) => {
-    if (!settings) return;
-    const updated = { ...settings, backgroundIntervalMinutes: mins };
-    setSettings(updated);
-    await saveAppSettings(updated);
-    if (settings.notificationsEnabled) {
-      await registerBackgroundFetch();
-    }
+  const updateSettings = useCallback(
+    async (updates: Partial<AppSettings>) => {
+      const newSettings = { ...settings, ...updates };
+      setSettings(newSettings);
+      await saveAppSettings(newSettings);
+      if (
+        updates.notificationsEnabled !== undefined ||
+        updates.backgroundIntervalMinutes !== undefined
+      ) {
+        await registerBackgroundFetch();
+      }
+    },
+    [settings]
+  );
+
+  const togglePlatform = (platform: string) => {
+    const list = settings.notificationPlatforms || [];
+    const next = list.includes(platform)
+      ? list.filter((p) => p !== platform)
+      : [...list, platform];
+    updateSettings({ notificationPlatforms: next });
   };
 
-  const handleSubmitFeedback = async () => {
-    const text = feedback.trim();
-    if (!text) {
-      Alert.alert('Empty', 'Please enter some feedback before sending.');
-      return;
-    }
-    const webhookUrl = process.env.EXPO_PUBLIC_DISCORD_WEBHOOK_URL;
-    if (!webhookUrl || webhookUrl === 'your_discord_webhook_url_here') {
-      Alert.alert('Thanks!', 'Feedback channel is not yet configured on this build. Thank you for testing!');
-      setFeedback('');
-      return;
-    }
+  const toggleCategory = (catKey: string) => {
+    const list = settings.notificationTypes || [];
+    const next = list.includes(catKey)
+      ? list.filter((c) => c !== catKey)
+      : [...list, catKey];
+    updateSettings({ notificationTypes: next });
+  };
+
+  const DISCORD_FEEDBACK_WEBHOOK_URL =
+    process.env.EXPO_PUBLIC_DISCORD_WEBHOOK_URL || '';
+
+  const handleFeedbackSubmit = async () => {
+    const trimmed = feedbackText.trim();
+    if (!trimmed || feedbackSending) return;
+
+    setFeedbackSending(true);
+
+    const senderName = currentName || userName || 'Hunter';
+    const feedbackEntry = {
+      user: senderName,
+      text: trimmed,
+      timestamp: Date.now(),
+    };
+
+    // 1. Always persist locally in AsyncStorage
     try {
-      const response = await fetch(webhookUrl, {
+      const existingRaw = await AsyncStorage.getItem('fgf_user_feedback');
+      const existing = existingRaw ? JSON.parse(existingRaw) : [];
+      existing.unshift(feedbackEntry);
+      await AsyncStorage.setItem('fgf_user_feedback', JSON.stringify(existing.slice(0, 50)));
+    } catch (e) {
+      console.warn('[Feedback] Local save error:', e);
+    }
+
+    // 2. Dispatch directly to Discord Channel Webhook (if configured)
+    if (DISCORD_FEEDBACK_WEBHOOK_URL) {
+      try {
+        await fetch(DISCORD_FEEDBACK_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: 'LootQuest Feedback Bot',
+            avatar_url: 'https://cdn-icons-png.flaticon.com/512/808/808682.png',
+            embeds: [
+              {
+                title: '💬 New In-App Feedback',
+                description: trimmed,
+                color: 0xededeb,
+                fields: [
+                  { name: 'User', value: senderName, inline: true },
+                  { name: 'Timestamp', value: new Date().toLocaleString(), inline: true },
+                ],
+                footer: { text: 'LootQuest Mobile v1.3.0' },
+              },
+            ],
+          }),
+        });
+      } catch (discordErr: any) {
+        console.warn('[Feedback] Discord direct webhook error:', discordErr?.message);
+      }
+    }
+
+    // 3. Transmit to backend for logging and admin panel
+    try {
+      await fetch('https://lootquest-backend.onrender.com/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          embeds: [{
-            title: '📡 New Feedback: LootQuest',
-            color: 3788564,
-            fields: [
-              { name: '💬 Feedback', value: text },
-              { name: '📱 Client', value: `${Platform.OS.toUpperCase()} (v${Platform.Version})` },
-              { name: '📦 App Version', value: appVersion },
-            ],
-            timestamp: new Date().toISOString(),
-          }],
-        }),
+        body: JSON.stringify(feedbackEntry),
       });
-      if (response.ok) {
-        Alert.alert('Received! 📡', 'Your feedback has been logged. Thank you!');
-        setFeedback('');
-      } else {
-        throw new Error(`Status: ${response.status}`);
-      }
-    } catch (e) {
-      Alert.alert('Failed ❌', 'Could not send feedback. Check your connection.');
+    } catch (err: any) {
+      console.warn('[Feedback] Backend dispatch error:', err?.message);
+    } finally {
+      setFeedbackSending(false);
+      setFeedbackSubmitted(true);
+      setFeedbackText('');
+      setTimeout(() => setFeedbackSubmitted(false), 3500);
     }
   };
-
-  const handleOpenKofi = async () => {
-    const url = 'https://ko-fi.com/H7O52237NT';
-    try {
-      await Linking.openURL(url);
-    } catch (e) {
-      Alert.alert('Error', 'Failed to open Ko-fi link.');
-    }
-  };
-
-  const handleJoinDiscord = async () => {
-    const url = 'https://discord.gg/pXxnhKWdGH';
-    try {
-      await Linking.openURL(url);
-    } catch (e) {
-      Alert.alert('Error', 'Failed to open Discord link.');
-    }
-  };
-
-  const handleOpenGamerPower = async () => {
-    const url = 'https://www.gamerpower.com';
-    try {
-      await Linking.openURL(url);
-    } catch (e) {
-      Alert.alert('Error', 'Failed to open GamerPower link.');
-    }
-  };
-
-  if (!settings) {
-    return (
-      <View style={styles.center}>
-        <Text style={styles.loadingText}>Loading settings...</Text>
-      </View>
-    );
-  }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}
+    >
+      {/* Title */}
+      <Text style={styles.heading}>Settings.</Text>
 
-      {/* ── Alerts Card ── */}
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={[styles.headerIconCircle, { borderColor: COLORS.primary }]}>
-            <Bell size={15} color={COLORS.primary} />
-          </View>
-          <Text style={styles.cardTitle}>Alerts</Text>
+      {/* Section: Profile / Your name */}
+      <Text style={styles.sectionHeading}>PROFILE</Text>
+      <View style={[styles.setRow, { borderTopWidth: 1, borderTopColor: COLORS.border }]}>
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          {/* Round 4 Item 5: Exact rewrite */}
+          <Text style={styles.setTitle}>Your name</Text>
+          <Text style={styles.setSub}>Shown in the greeting on Home.</Text>
         </View>
-
-        {/* Global Notifications Toggle */}
-        <View style={[styles.listRow, styles.listRowBorder]}>
-          <View style={[styles.platformIconBg, { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
-            <Bell size={14} color={COLORS.text} />
-          </View>
-          <Text style={[styles.listRowLabel, { color: COLORS.text, fontFamily: FONTS.bold }]}>Push Notifications</Text>
-          <Switch
-            value={settings.notificationsEnabled}
-            onValueChange={handleNotificationsEnabledToggle}
-            trackColor={{ false: 'rgba(255,255,255,0.08)', true: COLORS.primary }}
-            thumbColor={
-              Platform.OS === 'android'
-                ? settings.notificationsEnabled ? COLORS.bg : '#888'
-                : undefined
-            }
-          />
-        </View>
-
-        {ALL_PLATFORMS.map((p, idx) => {
-          const isEnabled = settings.notificationPlatforms.includes(p);
-          const bgColor = getPlatformColor(p);
-          const isLast = idx === ALL_PLATFORMS.length - 1;
-          const disabled = !settings.notificationsEnabled;
-          return (
-            <View key={p} style={[styles.listRow, !isLast && styles.listRowBorder, disabled && { opacity: 0.4 }]} pointerEvents={disabled ? 'none' : 'auto'}>
-              <View style={[styles.platformIconBg, { backgroundColor: bgColor }]}>
-                <StoreIcon platform={p} size={14} color="#fff" />
-              </View>
-              <Text style={styles.listRowLabel}>{p}</Text>
-              <Switch
-                value={isEnabled && !disabled}
-                disabled={disabled}
-                onValueChange={() => handlePlatformToggle(p)}
-                trackColor={{ false: 'rgba(255,255,255,0.08)', true: COLORS.primary }}
-                thumbColor={
-                  Platform.OS === 'android'
-                    ? isEnabled && !disabled ? COLORS.bg : '#888'
-                    : undefined
-                }
-              />
-            </View>
-          );
-        })}
       </View>
-
-      {/* ── Scan Frequency Card ── */}
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={[styles.headerIconCircle, { borderColor: COLORS.secondary }]}>
-            <Clock size={15} color={COLORS.secondary} />
-          </View>
-          <Text style={styles.cardTitle}>Scan Frequency</Text>
-        </View>
-
-        {INTERVALS.map(({ mins, label }, idx) => {
-          const isSelected = settings.backgroundIntervalMinutes === mins;
-          const isLast = idx === INTERVALS.length - 1;
-          return (
-            <TouchableOpacity
-              key={mins}
-              style={[styles.listRow, !isLast && styles.listRowBorder]}
-              onPress={() => handleIntervalChange(mins)}
-              activeOpacity={0.7}
-            >
-              {/* Custom radio circle */}
-              <View style={[styles.radioOuter, isSelected && styles.radioOuterActive]}>
-                {isSelected && <View style={styles.radioInner} />}
-              </View>
-              <Text style={[styles.listRowLabel, isSelected && styles.listRowLabelActive]}>
-                {label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {/* ── Content Filters Card ── */}
-      <View style={[styles.card, !settings.notificationsEnabled && { opacity: 0.4 }]}>
-        <View style={styles.cardHeader}>
-          <View style={[styles.headerIconCircle, { borderColor: COLORS.success }]}>
-            <SlidersHorizontal size={15} color={COLORS.success} />
-          </View>
-          <Text style={styles.cardTitle}>Content Filters</Text>
-        </View>
-
-        <Text style={styles.filterSublabel}>CONTENT TYPE</Text>
-
-        {ALL_TYPES.map(({ key, label }, idx) => {
-          const isChecked = settings.notificationTypes.includes(key);
-          const isLast = idx === ALL_TYPES.length - 1;
-          const disabled = !settings.notificationsEnabled;
-          return (
-            <TouchableOpacity
-              key={key}
-              style={[styles.listRow, !isLast && styles.listRowBorder]}
-              onPress={() => !disabled && handleTypeToggle(key)}
-              activeOpacity={disabled ? 1 : 0.7}
-              disabled={disabled}
-            >
-              <View style={[styles.checkbox, isChecked && !disabled && styles.checkboxChecked]}>
-                {isChecked && !disabled && <Check size={10} color={COLORS.bg} />}
-              </View>
-              <Text style={[styles.listRowLabel, isChecked && !disabled && styles.listRowLabelActive]}>
-                {label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {/* ── Send Feedback Card ── */}
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={[styles.headerIconCircle, { borderColor: '#a855f7' }]}>
-            <MessageCircle size={15} color="#a855f7" />
-          </View>
-          <Text style={styles.cardTitle}>Send Feedback</Text>
-        </View>
-
+      {/* Round 3 Item 12: Restyle boxed input to underline-only */}
+      <View style={styles.nameInputContainer}>
         <TextInput
-          style={styles.feedbackInput}
-          placeholder={"Got an idea to improve LootQuest?\nFound a bug? Let us know!"}
+          value={editingName}
+          onChangeText={setEditingName}
+          placeholder="Enter your name"
           placeholderTextColor={COLORS.textMuted}
-          value={feedback}
-          onChangeText={setFeedback}
-          multiline
-          numberOfLines={4}
-          textAlignVertical="top"
+          maxLength={20}
+          style={styles.nameInput}
+          autoCapitalize="words"
+          returnKeyType="done"
+          onSubmitEditing={handleSaveName}
         />
+        {editingName.trim() !== currentName && editingName.trim().length > 0 && (
+          <Pressable onPress={handleSaveName} style={styles.saveNameBtn}>
+            <Text style={styles.saveNameBtnText}>{nameSaved ? 'Saved!' : 'Save'}</Text>
+          </Pressable>
+        )}
+      </View>
 
-        <TouchableOpacity
-          style={styles.submitBtn}
-          onPress={handleSubmitFeedback}
-          activeOpacity={0.85}
+      {/* Section: Notifications */}
+      {/* Round 4 Item 5: Exact rewrite */}
+      <Text style={styles.sectionHeading}>NOTIFICATIONS</Text>
+      <View style={[styles.setRow, { borderTopWidth: 1, borderTopColor: COLORS.border }]}>
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text style={styles.setTitle}>Push notifications</Text>
+          {/* Round 4 Item 5: Exact rewrite */}
+          <Text style={styles.setSub}>Tell me when a new game goes free</Text>
+        </View>
+        <PrototypeSwitch
+          value={settings.notificationsEnabled}
+          onToggle={() =>
+            updateSettings({ notificationsEnabled: !settings.notificationsEnabled })
+          }
+        />
+      </View>
+
+      {/* Section: Stores to watch (.tgs) */}
+      {/* Round 4 Item 5: Exact rewrite */}
+      <Text style={styles.sectionHeading}>STORES TO WATCH</Text>
+      <View style={styles.tgsGrid}>
+        {ALL_PLATFORMS.map((store, i) => {
+          const isOn = (settings.notificationPlatforms || []).includes(store);
+          const isOdd = i % 2 === 0;
+          return (
+            <Pressable
+              key={store}
+              onPress={() => togglePlatform(store)}
+              style={[
+                styles.tgItem,
+                isOdd ? styles.tgItemOdd : styles.tgItemEven,
+              ]}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1 }}>
+                <StoreIcon store={store} size={14} color={isOn ? '#EDEDEB' : '#86868B'} />
+                <Text numberOfLines={1} style={[styles.tgText, isOn && styles.tgTextOn]}>{store}</Text>
+              </View>
+              <View style={[styles.tgDot, isOn && styles.tgDotOn]} />
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* Section: Game types */}
+      {/* Round 4 Item 5: Exact rewrite */}
+      <Text style={styles.sectionHeading}>GAME TYPES</Text>
+      <View style={styles.tgsGrid}>
+        {CATEGORIES.map((cat, i) => {
+          const isOn = (settings.notificationTypes || []).includes(cat.key);
+          const isOdd = i % 2 === 0;
+          return (
+            <Pressable
+              key={cat.key}
+              onPress={() => toggleCategory(cat.key)}
+              style={[
+                styles.tgItem,
+                isOdd ? styles.tgItemOdd : styles.tgItemEven,
+              ]}
+            >
+              <Text style={[styles.tgText, isOn && styles.tgTextOn]}>{cat.label}</Text>
+              <View style={[styles.tgDot, isOn && styles.tgDotOn]} />
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* Section: Content Preferences (Item 6) */}
+      <Text style={styles.sectionHeading}>CONTENT</Text>
+      <View style={[styles.setRow, { borderTopWidth: 1, borderTopColor: COLORS.border }]}>
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text style={styles.setTitle}>Always show 18+ games</Text>
+          <Text style={styles.setSub}>Show mature drops without asking each time</Text>
+        </View>
+        <PrototypeSwitch
+          value={alwaysShow18Plus}
+          onToggle={handleToggleAlwaysShow18Plus}
+        />
+      </View>
+
+      {/* Section: Privacy */}
+      <Text style={styles.sectionHeading}>PRIVACY</Text>
+      <View style={[styles.setRow, { borderTopWidth: 1, borderTopColor: COLORS.border }]}>
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text style={styles.setTitle}>Anonymous usage count</Text>
+          <Text style={styles.setSub}>Sends a random ID and the app version once a day. Nothing else.</Text>
+        </View>
+        <PrototypeSwitch
+          value={settings.anonymousUsageCount}
+          onToggle={() =>
+            updateSettings({ anonymousUsageCount: !settings.anonymousUsageCount })
+          }
+        />
+      </View>
+
+      {/* Section: Community */}
+      <Text style={styles.sectionHeading}>COMMUNITY</Text>
+      <Pressable
+        onPress={() => Linking.openURL('https://discord.gg/pXxnhKWdGH')}
+        style={[styles.setRow, { borderTopWidth: 1, borderTopColor: COLORS.border }]}
+      >
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text style={styles.setTitle}>Join our Discord</Text>
+          {/* Round 4 Item 5: Exact rewrite */}
+          <Text style={styles.setSub}>Chat with other LootQuest users and hear about drops early</Text>
+        </View>
+        <Text style={styles.arrowIcon}>↗</Text>
+      </Pressable>
+
+      <Pressable
+        onPress={() => Linking.openURL('https://ko-fi.com')}
+        style={styles.setRow}
+      >
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text style={styles.setTitle}>Support on Ko-fi</Text>
+          <Text style={styles.setSub}>Help cover server and notification costs</Text>
+        </View>
+        <Text style={styles.arrowIcon}>↗</Text>
+      </Pressable>
+
+      {/* Section: Feedback and suggestions */}
+      <Text style={styles.sectionHeading}>FEEDBACK AND SUGGESTIONS</Text>
+      <TextInput
+        value={feedbackText}
+        onChangeText={setFeedbackText}
+        placeholder="Got suggestions or found an issue? Tell us here..."
+        placeholderTextColor={COLORS.textMuted}
+        style={styles.ta}
+        multiline
+      />
+      <View style={styles.feedbackActionRow}>
+        <Pressable
+          onPress={handleFeedbackSubmit}
+          disabled={feedbackSending}
+          style={[styles.btn, feedbackSending && { opacity: 0.6 }]}
         >
-          <Text style={styles.submitText}>Submit Feedback</Text>
-        </TouchableOpacity>
+          <Text style={styles.btnText}>
+            {feedbackSending ? 'Submitting...' : feedbackSubmitted ? '✓ Thank you!' : 'Submit'}
+          </Text>
+        </Pressable>
       </View>
 
-      {/* ── Community Card ── */}
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={[styles.headerIconCircle, { borderColor: COLORS.secondary }]}>
-            <MessageCircle size={15} color={COLORS.secondary} />
-          </View>
-          <Text style={styles.cardTitle}>Community & Support</Text>
-        </View>
-        <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-          <Text style={styles.devNoteParagraph}>
-            If you like using LootQuest, please consider supporting the project! Your support helps keep the notification servers running.
-          </Text>
-        </View>
-        <TouchableOpacity
-          style={styles.kofiBtn}
-          onPress={handleOpenKofi}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.kofiText}>☕ Support on Ko-fi</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.discordBtn, { marginTop: 6, marginBottom: 14 }]}
-          onPress={handleJoinDiscord}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.discordText}>Join Discord Server</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* ── Diagnostics Card ── */}
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={[styles.headerIconCircle, { borderColor: '#eab308' }]}>
-            <SlidersHorizontal size={15} color="#eab308" />
-          </View>
-          <Text style={styles.cardTitle}>Diagnostics</Text>
-        </View>
-        <View style={styles.devNoteContent}>
-          <Text style={styles.devNoteParagraph}>
-            Test your active filters immediately by simulating push notifications. This triggers real local notifications for those allowed by your filters.
-          </Text>
-          <TouchableOpacity
-            style={[styles.submitBtn, { backgroundColor: '#eab308', marginHorizontal: 0, marginTop: 4 }]}
-            onPress={async () => {
-              const res1 = await testReceiveFCM('Steam', 'Game', 'Diagnostic: Steam Game Alert');
-              const res2 = await testReceiveFCM('GOG', 'DLC', 'Diagnostic: GOG DLC Alert');
-              const res3 = await testReceiveFCM('IndieGala', 'Beta', 'Diagnostic: IndieGala Beta Alert');
-              Alert.alert(
-                'Diagnostic Results',
-                `1. ${res1}\n\n2. ${res2}\n\n3. ${res3}`,
-                [{ text: 'OK' }]
-              );
-            }}
-            activeOpacity={0.85}
-          >
-            <Text style={[styles.submitText, { color: '#131313' }]}>Run Filter Diagnostics</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* ── Developer's Note Card ── */}
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={[styles.headerIconCircle, { borderColor: COLORS.secondary }]}>
-            <Gamepad2 size={15} color={COLORS.secondary} />
-          </View>
-          <Text style={styles.cardTitle}>Developer's Note</Text>
-        </View>
-        <View style={styles.devNoteContent}>
-          <Text style={styles.devNoteParagraph}>
-            LootQuest started as a tool I built for myself because I kept missing free giveaways.
-          </Text>
-          <Text style={styles.devNoteParagraph}>
-            Over time, I kept adding things I wished existed, and somehow it turned into a full app.
-          </Text>
-          <Text style={styles.devNoteParagraph}>
-            It's still very much a personal project, so if you run into bugs, have suggestions, or think something could be better, I'd love to hear it.
-          </Text>
-          <Text style={styles.devNoteParagraph}>
-            Thanks for checking it out.
-          </Text>
-          <View style={styles.signatureContainer}>
-            <Text style={styles.signatureLabel}>
-              Made with ❤️ by <Text style={styles.highlightedNameTextOnly}>Eklavya Ahuja</Text>
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* ── Version Footer ── */}
+      {/* Version Footer */}
       <View style={styles.versionFooter}>
-        <Text style={styles.versionAppName}>LOOTQUEST</Text>
-        <Text style={styles.versionText}>{`Version ${appVersion} (Beta)`}</Text>
-        <Text style={styles.attributionText} onPress={handleOpenGamerPower}>
-          Data provided by <Text style={styles.hyperlink}>GamerPower.com</Text>
-        </Text>
+        <Text style={styles.versionFooterText}>v1.3.0</Text>
       </View>
-
     </ScrollView>
   );
 }
@@ -441,253 +424,187 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg,
   },
   scrollContent: {
-    padding: 16,
-    paddingBottom: 48,
-    gap: 12,
+    paddingHorizontal: 20,
+    paddingTop: 26,
+    paddingBottom: 120,
   },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
+  heading: {
+    fontFamily: FONTS.serif,
+    fontSize: 56,
+    lineHeight: 56,
+    color: '#EDEDEB',
+    letterSpacing: -1.6,
+  },
+  // Underline-only input for name
+  nameInputContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.bg,
+    gap: 12,
+    marginTop: 8,
+    marginBottom: 20,
   },
-  loadingText: {
-    fontFamily: FONTS.medium,
+  nameInput: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1C1C1E',
+    borderRadius: 0,
+    paddingVertical: 12,
+    paddingHorizontal: 0,
+    color: '#EDEDEB',
+    fontFamily: FONTS.regular,
     fontSize: 16,
-    color: COLORS.text,
   },
-
-  // Card shell
-  card: {
-    backgroundColor: COLORS.surfaceCharcoal,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    overflow: 'hidden',
-  },
-
-  // Card header row
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingTop: 13,
-    paddingBottom: 11,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
-  },
-  headerIconCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  cardTitle: {
-    fontFamily: FONTS.bold,
-    fontSize: 15,
-    color: COLORS.text,
-  },
-
-  // Generic list row (used for Alerts, Frequency, Filters)
-  listRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-    gap: 12,
-  },
-  listRowBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-  },
-  listRowLabel: {
-    flex: 1,
-    fontFamily: FONTS.medium,
-    fontSize: 14,
-    color: COLORS.textMuted,
-  },
-  listRowLabelActive: {
-    color: COLORS.text,
-    fontFamily: FONTS.bold,
-  },
-
-  // Platform icon background square
-  platformIconBg: {
-    width: 28,
-    height: 28,
+  saveNameBtn: {
+    backgroundColor: '#EDEDEB',
     borderRadius: 8,
-    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+  },
+  saveNameBtnText: {
+    fontFamily: FONTS.bold,
+    fontSize: 12,
+    color: '#000000',
+    letterSpacing: 0.5,
+  },
+  versionFooter: {
     alignItems: 'center',
-  },
-
-  // Radio button (Scan Frequency)
-  radioOuter: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 2,
-    borderColor: COLORS.textMuted,
     justifyContent: 'center',
+    paddingVertical: 24,
+    marginTop: 12,
+  },
+  versionFooterText: {
+    fontFamily: FONTS.mono,
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#555558',
+    letterSpacing: 1.2,
+  },
+  sectionHeading: {
+    fontFamily: FONTS.mono,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#86868B',
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    marginTop: 34,
+    marginBottom: 14,
+  },
+  setRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    paddingVertical: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1C1C1E',
   },
-  radioOuterActive: {
-    borderColor: COLORS.primary,
+  setTitle: {
+    fontFamily: FONTS.regular,
+    fontSize: 16,
+    color: '#EDEDEB',
   },
-  radioInner: {
+  setSub: {
+    fontFamily: FONTS.regular,
+    fontSize: 13,
+    color: '#86868B',
+    marginTop: 3,
+  },
+  arrowIcon: {
+    fontFamily: FONTS.regular,
+    fontSize: 18,
+    color: '#86868B',
+  },
+  // Toggles: on = white track with black knob
+  switchTrack: {
+    width: 44,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#1C1C1E',
+    padding: 3,
+    justifyContent: 'center',
+  },
+  switchTrackOn: {
+    backgroundColor: '#EDEDEB',
+  },
+  switchThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#86868B',
+  },
+  switchThumbOn: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#000000',
+  },
+  tgsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    borderTopWidth: 1,
+    borderTopColor: '#1C1C1E',
+  },
+  tgItem: {
+    width: '50%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 17,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1C1C1E',
+  },
+  tgItemOdd: {
+    paddingRight: 14,
+  },
+  tgItemEven: {
+    paddingLeft: 14,
+    borderLeftWidth: 1,
+    borderLeftColor: '#1C1C1E',
+  },
+  tgText: {
+    fontFamily: FONTS.regular,
+    fontSize: 14.5,
+    color: '#86868B',
+  },
+  tgTextOn: {
+    color: '#EDEDEB',
+  },
+  tgDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: COLORS.primary,
-  },
-
-  // Checkbox (Content Filters)
-  filterSublabel: {
-    fontFamily: FONTS.bold,
-    fontSize: 10,
-    color: COLORS.textMuted,
-    letterSpacing: 1.2,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 4,
-  },
-  checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: COLORS.textMuted,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  checkboxChecked: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-
-  // Feedback card
-  feedbackInput: {
-    marginHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    color: COLORS.text,
-    fontFamily: FONTS.medium,
-    fontSize: 13,
-    minHeight: 80,
+    borderColor: '#4D4D52',
   },
-  submitBtn: {
-    marginHorizontal: 16,
-    marginBottom: 14,
-    borderRadius: 24,
-    backgroundColor: COLORS.primary,
-    paddingVertical: 13,
-    alignItems: 'center',
+  tgDotOn: {
+    backgroundColor: '#EDEDEB',
+    borderColor: '#EDEDEB',
   },
-  submitText: {
-    fontFamily: FONTS.bold,
+  ta: {
+    width: '100%',
+    height: 84,
+    backgroundColor: 'transparent',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1C1C1E',
+    color: '#EDEDEB',
+    fontFamily: FONTS.regular,
     fontSize: 15,
-    color: COLORS.bg,
-    letterSpacing: 0.2,
-  },
-
-  // Footer
-  versionFooter: {
-    alignItems: 'center',
-    paddingVertical: 20,
-    gap: 4,
-  },
-  versionAppName: {
-    fontFamily: FONTS.bold,
-    fontSize: 12,
-    color: COLORS.textMuted,
-    letterSpacing: 2,
-  },
-  versionText: {
-    fontFamily: FONTS.medium,
-    fontSize: 11,
-    color: COLORS.textMuted,
-    letterSpacing: 0.4,
-  },
-  devNoteContent: {
-    padding: 16,
-    gap: 12,
-  },
-  devNoteParagraph: {
-    fontFamily: FONTS.medium,
-    fontSize: 13,
-    color: COLORS.textMuted,
-    lineHeight: 18,
-  },
-  signatureContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  signatureLabel: {
-    fontFamily: FONTS.bold,
-    fontSize: 12,
-    color: COLORS.textMuted,
-  },
-  kofiBtn: {
-    marginHorizontal: 16,
-    marginTop: 14,
-    borderRadius: 24,
-    backgroundColor: '#FF5E5B', // Ko-fi Signature Red/Coral
-    paddingVertical: 13,
-    alignItems: 'center',
-    shadowColor: '#FF5E5B',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  kofiText: {
-    fontFamily: FONTS.bold,
-    fontSize: 15,
-    color: '#ffffff',
-    letterSpacing: 0.2,
-  },
-  highlightedNameTextOnly: {
-    fontFamily: FONTS.bold,
-    color: '#39ff14', // Neon green highlight
-  },
-  discordBtn: {
-    marginHorizontal: 16,
-    marginVertical: 14,
-    borderRadius: 24,
-    backgroundColor: '#5865F2', // Discord Purple-Blue
-    paddingVertical: 13,
-    alignItems: 'center',
-    shadowColor: '#5865F2',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  discordText: {
-    fontFamily: FONTS.bold,
-    fontSize: 15,
-    color: '#ffffff',
-    letterSpacing: 0.2,
-  },
-  attributionText: {
-    fontFamily: FONTS.medium,
-    fontSize: 11,
-    color: COLORS.textMuted,
+    paddingVertical: 12,
     marginTop: 6,
-    textAlign: 'center',
+    textAlignVertical: 'top',
   },
-  hyperlink: {
-    color: COLORS.primary,
-    textDecorationLine: 'underline',
+  feedbackActionRow: {
+    marginTop: 16,
+    alignItems: 'flex-start',
+  },
+  btn: {
+    backgroundColor: '#EDEDEB',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+  },
+  btnText: {
+    fontFamily: FONTS.bold,
+    fontSize: 14,
+    color: '#000000',
   },
 });

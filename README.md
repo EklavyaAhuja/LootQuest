@@ -139,6 +139,14 @@ Build your own giveaway collection.
 
 ---
 
+## 📊 Usage counting
+
+On open, the app sends at most one small anonymous ping per day containing a random install ID and the app version — nothing else. No name, no claimed games, no deals, no device info.
+
+You can turn this off anytime in **Settings → Anonymous usage count**. When the toggle is off, no usage request is made at all. No personal data is collected.
+
+---
+
 # 🚀 Getting Started
 
 ## Clone

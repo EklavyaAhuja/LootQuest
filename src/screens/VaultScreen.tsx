@@ -1,521 +1,449 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   StyleSheet,
   Text,
   View,
   ScrollView,
-  Image,
-  Alert,
   Pressable,
+  FlatList,
+  Animated,
+  AccessibilityInfo,
 } from 'react-native';
-import { COLORS, FONTS } from '../theme/theme';
-import BouncyPressable from '../components/BouncyPressable';
-import { getClaimedPosts, getTrackedPosts, removeClaimedPost } from '../services/storageService';
-import { RedditPost } from '../services/redditService';
-import { Gamepad2, Trash2, ExternalLink } from 'lucide-react-native';
-import * as WebBrowser from 'expo-web-browser';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { dealEnrichmentService } from '../services/DealEnrichmentService';
-import { postToBasicDeal } from '../services/DealClassifier';
+import { Ionicons } from '@expo/vector-icons';
+import { COLORS, FONTS, RADIUS } from '../theme/theme';
+import { dealsStore } from '../services/dealsStore';
+import { calculateVaultValue } from '../utils/dealUtils';
 import { Deal } from '../models/Deal';
+import { PosterCard } from '../components/UnifiedCards';
 import StoreIcon from '../components/StoreIcon';
-
-// Helper to extract Steam App ID from URL
-function extractSteamAppId(url?: string): string | null {
-  if (!url) return null;
-  const match = url.match(/\/app\/(\d+)/i);
-  return match ? match[1] : null;
-}
-
-// Helper to parse price string to number
-function parsePriceToNumber(priceStr?: string | null): number {
-  if (!priceStr) return 0;
-  let normalized = priceStr.trim();
-  // Handle European comma decimal versus US comma thousands separator
-  if (normalized.includes(',') && !normalized.includes('.')) {
-    normalized = normalized.replace(',', '.');
-  } else if (normalized.includes(',')) {
-    normalized = normalized.replace(/,/g, '');
-  }
-  const match = normalized.match(/\d+(?:\.\d+)?/);
-  if (match) {
-    const price = parseFloat(match[0]);
-    return isNaN(price) ? 0 : price;
-  }
-  return 0;
-}
-
-// Fetch original price directly from Steam store API without discount (force USD using &cc=us)
-async function fetchSteamOriginalPrice(appId: string): Promise<string | null> {
-  try {
-    const url = `https://store.steampowered.com/api/appdetails?appids=${appId}&filters=price_overview&cc=us`;
-    console.log(`[VaultScreen] Fetching Steam price for App ID: ${appId}`);
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    const data = await response.json();
-    const appData = data[appId];
-    if (appData && appData.success && appData.data?.price_overview) {
-      const priceOverview = appData.data.price_overview;
-      // Get formatted initial price (original price before discount)
-      if (priceOverview.initial_formatted) {
-        return priceOverview.initial_formatted;
-      }
-      // Fallback: use initial (in cents)
-      if (typeof priceOverview.initial === 'number') {
-        return `$${(priceOverview.initial / 100).toFixed(2)}`;
-      }
-    }
-  } catch (e) {
-    console.warn(`[VaultScreen] Failed to fetch Steam price for App ID ${appId}:`, e);
-  }
-  return null;
-}
-
-// Fallback cover images for claimed posts
-const COVER_IMAGES = [
-  'https://images.unsplash.com/photo-1538481199705-c710c4e965fc?auto=format&fit=crop&w=600&q=80',
-  'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=600&q=80',
-  'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=600&q=80',
-  'https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=600&q=80',
-];
+import { VaultSkeleton, useSkeletonDisplay } from '../components/LootSkeleton';
 
 interface VaultScreenProps {
   onDealSelect?: (deal: Deal) => void;
+  isActive?: boolean;
+  claimedDeals?: Deal[];
+  onRemoveClaimed?: (dealId: string) => void;
 }
 
-export default function VaultScreen({ onDealSelect }: VaultScreenProps) {
-  const [claimedGames, setClaimedGames] = useState<Deal[]>([]);
-  const [trackedGames, setTrackedGames] = useState<Deal[]>([]);
+const VAULT_CHIPS = [
+  { id: 'All', label: 'All' },
+  { id: 'PC', label: 'PC' },
+  { id: 'Steam', label: 'Steam', store: 'Steam' },
+  { id: 'Epic Games', label: 'Epic', store: 'Epic Games' },
+  { id: 'Console', label: 'Console' },
+];
+
+export default function VaultScreen({
+  onDealSelect,
+  isActive,
+  onRemoveClaimed,
+}: VaultScreenProps) {
+  const [, setStoreVersion] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [selectedFilter, setSelectedFilter] = useState('All');
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+  const [isReduceMotion, setIsReduceMotion] = useState(false);
 
-  const handleImageError = (postId: string) => {
-    setImageErrors(prev => ({ ...prev, [postId]: true }));
-  };
-  
+  // Undo Toast State
+  const [lastRemovedDeal, setLastRemovedDeal] = useState<Deal | null>(null);
+  const [undoToastVisible, setUndoToastVisible] = useState(false);
+  const undoTimeoutRef = useRef<any>(null);
 
+  // Subscribe to central dealsStore (Item 1 & 2)
+  useEffect(() => {
+    dealsStore.init().then(() => {
+      setLoading(false);
+    });
 
-  const loadData = async () => {
-    const claimed = await getClaimedPosts();
-    const tracked = await getTrackedPosts();
+    const unsubscribe = dealsStore.subscribe(() => {
+      setStoreVersion((v) => v + 1);
+      setLoading(false);
+    });
 
-    const claimedDeals = claimed.map(postToBasicDeal);
-    const trackedDeals = tracked.map(postToBasicDeal);
+    return () => unsubscribe();
+  }, []);
 
-    setClaimedGames(claimedDeals);
-    setTrackedGames(trackedDeals);
+  const vaultItems = dealsStore.getVaultItems(selectedFilter);
+  const allVaultItems = dealsStore.getVaultItems('All');
+  const stats = dealsStore.getStats();
 
-    // Background fetch for any Steam games missing prices
-    const fetchMissingSteamPrices = async (deals: Deal[], setter: React.Dispatch<React.SetStateAction<Deal[]>>) => {
-      for (const deal of deals) {
-        if (!deal.originalPrice && !deal.worth) {
-          const appId = extractSteamAppId(deal.url);
-          if (appId) {
-            const price = await fetchSteamOriginalPrice(appId);
-            if (price) {
-              setter((prev) =>
-                prev.map((d) =>
-                  d.id === deal.id
-                    ? { ...d, originalPrice: price, worth: price }
-                    : d
-                )
-              );
-            }
-          }
-        }
+  // Animated money saved counter (900ms ease-out cubic)
+  const targetSaved = stats.vaultValueSaved;
+  const [displaySaved, setDisplaySaved] = useState(targetSaved);
+  const currentSavedRef = useRef(displaySaved);
+
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setIsReduceMotion);
+    const sub = AccessibilityInfo.addEventListener?.('reduceMotionChanged', setIsReduceMotion);
+    return () => sub?.remove?.();
+  }, []);
+
+  useEffect(() => {
+    const startVal = currentSavedRef.current;
+    if (Math.abs(targetSaved - startVal) < 0.01) return;
+
+    if (isReduceMotion) {
+      setDisplaySaved(targetSaved);
+      currentSavedRef.current = targetSaved;
+      return;
+    }
+
+    const startTime = Date.now();
+    const duration = 900; // 900ms ease-out cubic
+
+    const step = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(1, elapsed / duration);
+      const factor = 1 - Math.pow(1 - progress, 3);
+      const current = startVal + (targetSaved - startVal) * factor;
+      setDisplaySaved(current);
+
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      } else {
+        currentSavedRef.current = targetSaved;
+        setDisplaySaved(targetSaved);
       }
     };
 
-    fetchMissingSteamPrices(claimedDeals, setClaimedGames);
-    fetchMissingSteamPrices(trackedDeals, setTrackedGames);
+    requestAnimationFrame(step);
+  }, [targetSaved, isReduceMotion]);
 
-    dealEnrichmentService.reset();
-    dealEnrichmentService.enrichDeals([...claimedDeals, ...trackedDeals], async (updatedDeal) => {
-      let finalDeal = updatedDeal;
-      if (!finalDeal.originalPrice && !finalDeal.worth) {
-        const appId = extractSteamAppId(finalDeal.url);
-        if (appId) {
-          const price = await fetchSteamOriginalPrice(appId);
-          if (price) {
-            finalDeal = { ...finalDeal, originalPrice: price, worth: price };
-          }
-        }
-      }
-
-      setClaimedGames((prev) =>
-        prev.map((d) => (d.id === finalDeal.id ? finalDeal : d))
-      );
-      setTrackedGames((prev) =>
-        prev.map((d) => (d.id === finalDeal.id ? finalDeal : d))
-      );
-    });
-  };
-
-  useEffect(() => {
-    loadData();
+  const handleImageError = useCallback((id: string) => {
+    setImageErrors((prev) => ({ ...prev, [id]: true }));
   }, []);
 
-  const handleDeleteClaim = async (postId: string) => {
-    Alert.alert('Discard Loot?', 'Do you want to remove this item from your vault?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Discard',
-        style: 'destructive',
-        onPress: async () => {
-          await removeClaimedPost(postId);
-          try {
-            const currentTracked = await getTrackedPosts();
-            const updatedTracked = currentTracked.filter(p => p.id !== postId);
-            await AsyncStorage.setItem('fgf_tracked_posts', JSON.stringify(updatedTracked));
-          } catch (e) {
-            console.error('Error removing tracked post:', e);
-          }
-          loadData();
-        },
-      },
-    ]);
-  };
+  // Delete with 4-second Undo toast via Central dealsStore
+  const handleDeleteDeal = useCallback(
+    async (deal: Deal) => {
+      try {
+        await dealsStore.unclaimDeal(deal.id, deal.title);
+        onRemoveClaimed?.(deal.id);
 
-  const handleLaunchGame = async (url: string) => {
+        setLastRemovedDeal(deal);
+        setUndoToastVisible(true);
+
+        if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
+        undoTimeoutRef.current = setTimeout(() => {
+          setUndoToastVisible(false);
+          setLastRemovedDeal(null);
+        }, 4000);
+      } catch (e) {
+        console.error('Error deleting deal from vault:', e);
+      }
+    },
+    [onRemoveClaimed]
+  );
+
+  const handleUndoDelete = useCallback(async () => {
+    if (!lastRemovedDeal) return;
     try {
-      await WebBrowser.openBrowserAsync(url);
+      if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
+      await dealsStore.claimDeal(lastRemovedDeal);
+      setUndoToastVisible(false);
+      setLastRemovedDeal(null);
     } catch (e) {
-      console.error(e);
+      console.error('Error undoing delete in vault:', e);
     }
-  };
+  }, [lastRemovedDeal]);
 
+  // "Avg per game" = total saved / number of claimed games that have a real price
+  const avgPerGame = useMemo(() => {
+    const realPriceGames = allVaultItems.filter((d) => {
+      if (!d.worth || d.isEstimated) return false;
+      const num = parseFloat(d.worth.replace(/[^0-9.]/g, ''));
+      return !isNaN(num) && num > 0;
+    });
+    if (realPriceGames.length === 0) return '0.00';
+    return (displaySaved / realPriceGames.length).toFixed(2);
+  }, [allVaultItems, displaySaved]);
 
-  // Combine claimed and tracked lists
-  const displayedItems = (() => {
-    const list: { deal: Deal; status: 'CLAIMED' | 'TRACKING' }[] = [];
-    claimedGames.forEach((d) => list.push({ deal: d, status: 'CLAIMED' }));
-    trackedGames.forEach((d) => list.push({ deal: d, status: 'TRACKING' }));
-    return list;
-  })();
+  // Skeleton Loader with 400ms min display (Item 4)
+  const { showSkeleton, contentFadeAnim } = useSkeletonDisplay(loading && allVaultItems.length === 0, 400);
 
-  const getGameCover = (id: string) => {
-    // Generate deterministic cover index based on post ID
-    let sum = 0;
-    for (let i = 0; i < id.length; i++) {
-      sum += id.charCodeAt(i);
-    }
-    return COVER_IMAGES[sum % COVER_IMAGES.length];
-  };
+  if (showSkeleton) {
+    return <VaultSkeleton />;
+  }
 
-  const totalClaimedValue = claimedGames.reduce((sum, deal) => {
-    const priceStr = deal.originalPrice || deal.worth;
-    return sum + parsePriceToNumber(priceStr);
-  }, 0);
+  const renderHeader = () => (
+    <View style={styles.header}>
+      {/* Top Label with Dot */}
+      <View style={styles.topLabelRow}>
+        <View style={styles.dot} />
+        <Text style={styles.topLabel}>MONEY SAVED</Text>
+      </View>
 
-  return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Stats Header */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>CLAIMED LOOT</Text>
-            <Text style={styles.statValueClaimed}>{claimedGames.length}</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>TOTAL VALUE</Text>
-            <Text style={styles.statValuePrice}>${totalClaimedValue.toFixed(2)}</Text>
-          </View>
+      {/* Giant Number (.big) with Animated count-up */}
+      <Text style={styles.bigNumber}>${displaySaved.toFixed(2)}</Text>
+      <Text style={styles.subtitle}>What you've claimed, and what it would have cost.</Text>
+
+      {/* 3-Column Stats Grid (.stats) */}
+      <View style={styles.statsGrid}>
+        <View style={styles.statCol}>
+          <Text style={styles.statLabel}>CLAIMED</Text>
+          <Text style={styles.statValue}>{stats.totalClaimedVault}</Text>
         </View>
+        <View style={[styles.statCol, styles.statColDivided]}>
+          <Text style={styles.statLabel}>SAVED</Text>
+          <Text style={[styles.statValue, { color: '#EDEDEB' }]}>
+            ${displaySaved.toFixed(2)}
+          </Text>
+        </View>
+        <View style={[styles.statCol, styles.statColDivided]}>
+          <Text style={styles.statLabel}>AVG PER GAME</Text>
+          <Text style={styles.statValue}>${avgPerGame}</Text>
+        </View>
+      </View>
 
-
-
-        {/* Grid of Cards */}
-        {displayedItems.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Gamepad2 size={48} color={COLORS.textMuted} />
-            <Text style={styles.emptyTitle}>VAULT EMPTY</Text>
-            <Text style={styles.emptySub}>
-              Start claiming freebies from the feed.
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.gridContainer}>
-            {displayedItems.map(({ deal, status }) => {
-              // Dynamic check for NSFW in case older saved item doesn't have the flag
-              const isItemNsfw = deal.isNsfw || 
-                                 /nsfw/i.test(deal.title || '') ||
-                                 /18\+/i.test(deal.title || '') ||
-                                 /mazakon/i.test(deal.title || '') ||
-                                 /tengoku/i.test(deal.title || '') ||
-                                 (deal.url && deal.url.toLowerCase().includes('dlsite')) ||
-                                 deal.platform.toLowerCase().includes('dlsite');
-
-              return (
-                <View 
-                  key={deal.id} 
-                  style={[
-                    styles.vaultCard,
-                    status === 'TRACKING' ? styles.cardTracking : styles.cardClaimed
-                  ]}
-                >
-                  {/* Image Cover (clickable to open details) */}
-                  <Pressable onPress={() => onDealSelect?.(deal)}>
-                    <View style={styles.imageWrapper}>
-                      <Image 
-                        source={{ 
-                          uri: (() => {
-                            const resolvedUri = deal.image;
-                            return (!imageErrors[deal.id] && resolvedUri && resolvedUri !== 'placeholder')
-                              ? resolvedUri
-                              : getGameCover(deal.id);
-                          })()
-                        }} 
-                        style={styles.cardImage} 
-                        blurRadius={isItemNsfw ? 15 : 0}
-                        onError={() => handleImageError(deal.id)}
-                      />
-                      {isItemNsfw && (
-                        <View style={styles.nsfwVaultOverlay}>
-                          <View style={styles.nsfwBadge}>
-                            <Text style={styles.nsfwBadgeText}>NSFW</Text>
-                          </View>
-                        </View>
-                      )}
-                    </View>
-                  </Pressable>
-
-                  {/* Card Info */}
-                  <View style={styles.cardInfo}>
-                    <View style={styles.cardHeaderInfoRow}>
-                      <Pressable style={styles.cardTextDetails} onPress={() => onDealSelect?.(deal)}>
-                        <Text numberOfLines={1} style={styles.gameTitle}>
-                          {deal.title}
-                        </Text>
-                        <View style={styles.platformIconRow}>
-                          <StoreIcon platform={deal.platform} size={12} color={COLORS.textMuted} style={{ marginRight: 4 }} />
-                          <Text style={styles.platformLabel}>
-                            {deal.platform.toUpperCase()} • {status === 'CLAIMED' ? 'STANDARD' : 'WISH-LISTED'}
-                          </Text>
-                        </View>
-                      </Pressable>
-
-                      {/* Action Buttons */}
-                      <View style={styles.cardActions}>
-                        <BouncyPressable
-                           onPress={() => handleLaunchGame(deal.url)}
-                           backgroundColor={COLORS.surfaceCharcoal}
-                           borderRadius={8}
-                           shadowOffsetSize={0}
-                           style={styles.actionBtnWrapper}
-                           contentStyle={[styles.actionBtn, { borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.05)' }]}
-                        >
-                          <ExternalLink size={14} color={COLORS.secondary} />
-                        </BouncyPressable>
-
-                        <BouncyPressable
-                          onPress={() => handleDeleteClaim(deal.id)}
-                          backgroundColor={COLORS.warning}
-                          borderRadius={8}
-                          shadowOffsetSize={0}
-                          style={styles.actionBtnWrapper}
-                          contentStyle={styles.actionBtn}
-                        >
-                          <Trash2 size={14} color="#ffffff" />
-                        </BouncyPressable>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-        )}
+      {/* Plain text filter tabs with a 1px underline on active */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.chipsScroll}
+      >
+        {VAULT_CHIPS.map((chip) => {
+          const isChipActive = selectedFilter === chip.id;
+          return (
+            <Pressable
+              key={chip.id}
+              onPress={() => setSelectedFilter(chip.id)}
+              style={[styles.plainTab, isChipActive && styles.plainTabActive]}
+            >
+              {chip.store && (
+                <StoreIcon
+                  store={chip.store}
+                  size={12}
+                  color={isChipActive ? '#EDEDEB' : '#86868B'}
+                />
+              )}
+              <Text style={[styles.plainTabText, isChipActive && styles.plainTabTextActive]}>
+                {chip.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </ScrollView>
     </View>
+  );
+
+  return (
+    <Animated.View style={[styles.container, { opacity: contentFadeAnim }]}>
+      <FlatList
+        data={vaultItems}
+        keyExtractor={(item) => item.id}
+        numColumns={2}
+        columnWrapperStyle={styles.columnWrapper}
+        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={renderHeader()}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        renderItem={({ item }) => (
+          <View style={styles.gridItem}>
+            <PosterCard
+              deal={item}
+              onPress={(deal) => onDealSelect?.(deal)}
+              isClaimed={true}
+              isVault={true}
+              onDelete={handleDeleteDeal}
+              showRating={true}
+              artAspectRatio={16 / 9}
+              width="100%"
+              imageErrors={imageErrors}
+              onImageError={handleImageError}
+            />
+          </View>
+        )}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Ionicons name="cube-outline" size={48} color={COLORS.textMuted} />
+            <Text style={styles.emptyTitle}>Vault is empty</Text>
+            <Text style={styles.emptySub}>
+              Claim giveaways from the Home or Feed tabs to add them to your lifetime vault.
+            </Text>
+          </View>
+        }
+      />
+
+      {/* Removed · Undo toast */}
+      {undoToastVisible && (
+        <View style={styles.undoToast}>
+          <Text style={styles.undoToastText}>Removed</Text>
+          <Text style={styles.undoToastDivider}>·</Text>
+          <Pressable onPress={handleUndoDelete} hitSlop={8}>
+            <Text style={styles.undoToastAction}>Undo</Text>
+          </Pressable>
+        </View>
+      )}
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.bg,
+    backgroundColor: '#000000',
   },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 24,
+  listContent: {
+    paddingHorizontal: 20,
+    paddingTop: 28,
+    paddingBottom: 120,
   },
-  filterRow: {
+  header: {
+    marginBottom: 8,
+  },
+  topLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#EDEDEB',
+  },
+  topLabel: {
+    fontFamily: FONTS.mono,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#86868B',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  bigNumber: {
+    fontFamily: FONTS.serif,
+    fontSize: 68,
+    lineHeight: 68,
+    color: '#EDEDEB',
+    letterSpacing: -2,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  subtitle: {
+    fontFamily: FONTS.regular,
+    fontSize: 14.5,
+    color: '#86868B',
     marginBottom: 20,
   },
-  chipScroll: {
-    gap: 8,
-    paddingBottom: 6,
-  },
-  filterChipWrapper: {
-    justifyContent: 'center',
-  },
-  filterChip: {
+  statsGrid: {
+    flexDirection: 'row',
+    backgroundColor: '#0C0C0E',
+    borderWidth: 1,
+    borderColor: '#1C1C1E',
+    borderRadius: 8,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
+    marginBottom: 24,
   },
-  filterChipText: {
-    fontFamily: FONTS.bold,
-    fontSize: 14,
-    color: COLORS.textMuted,
+  statCol: {
+    flex: 1,
   },
-  filterChipTextActive: {
-    color: COLORS.bg,
+  statColDivided: {
+    borderLeftWidth: 1,
+    borderLeftColor: '#1C1C1E',
+    paddingLeft: 14,
+  },
+  statLabel: {
+    fontFamily: FONTS.mono,
+    fontSize: 10,
+    color: '#86868B',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  statValue: {
+    fontFamily: FONTS.mono,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#EDEDEB',
+    marginTop: 4,
+  },
+  chipsScroll: {
+    gap: 16,
+    marginBottom: 16,
+    paddingRight: 20,
+  },
+  plainTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: 'transparent',
+  },
+  plainTabActive: {
+    borderBottomColor: '#EDEDEB',
+  },
+  plainTabText: {
+    fontFamily: FONTS.regular,
+    fontSize: 13,
+    lineHeight: 16,
+    color: '#86868B',
+  },
+  plainTabTextActive: {
+    color: '#EDEDEB',
+    fontWeight: '600',
+  },
+  columnWrapper: {
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  gridItem: {
+    width: '48%',
   },
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 64,
-    gap: 12,
   },
   emptyTitle: {
-    fontFamily: FONTS.bold,
-    fontSize: 20,
-    color: COLORS.text,
+    fontFamily: FONTS.serif,
+    fontSize: 28,
+    color: '#EDEDEB',
+    marginTop: 16,
+    marginBottom: 8,
   },
   emptySub: {
-    fontFamily: FONTS.medium,
-    fontSize: 15,
-    color: COLORS.onSurfaceVariant,
+    fontFamily: FONTS.regular,
+    fontSize: 14,
+    color: '#86868B',
     textAlign: 'center',
-    maxWidth: 240,
+    lineHeight: 20,
+    paddingHorizontal: 32,
   },
-  gridContainer: {
-    gap: 16,
-  },
-  vaultCard: {
-    backgroundColor: COLORS.surfaceCharcoal,
+  undoToast: {
+    position: 'absolute',
+    bottom: 96,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#1C1C1E',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 16,
-    overflow: 'hidden',
+    borderColor: '#2C2C2E',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: RADIUS.pill,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 20,
-    elevation: 4,
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
-  cardTracking: {
-    borderLeftWidth: 4,
-    borderLeftColor: COLORS.secondary, // Cyan
-  },
-  cardClaimed: {
-    borderLeftWidth: 4,
-    borderLeftColor: COLORS.success, // Green
-  },
-  imageWrapper: {
-    position: 'relative',
-    height: 150,
-  },
-  cardImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  cardInfo: {
-    padding: 16,
-  },
-  cardHeaderInfoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  cardTextDetails: {
-    flex: 1,
-    marginRight: 12,
-  },
-  gameTitle: {
-    fontFamily: FONTS.bold,
-    fontSize: 18,
-    color: '#ffffff',
-    marginBottom: 4,
-  },
-  platformIconRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  platformLabel: {
-    fontFamily: FONTS.medium,
+  undoToastText: {
+    fontFamily: FONTS.regular,
     fontSize: 13,
-    color: COLORS.textMuted,
+    color: '#EDEDEB',
   },
-  cardActions: {
-    flexDirection: 'row',
-    gap: 8,
+  undoToastDivider: {
+    color: '#86868B',
+    fontSize: 13,
   },
-  actionBtnWrapper: {
-    justifyContent: 'center',
-  },
-  actionBtn: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 8,
-  },
-  nsfwVaultOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    zIndex: 10,
-  },
-  nsfwBadge: {
-    borderWidth: 1.5,
-    borderColor: COLORS.warning,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 36, 73, 0.15)',
-  },
-  nsfwBadgeText: {
+  undoToastAction: {
     fontFamily: FONTS.mono,
     fontSize: 12,
-    color: COLORS.warning,
-    fontWeight: 'bold',
-    letterSpacing: 1,
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    backgroundColor: COLORS.surfaceCharcoal,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 16,
-    paddingVertical: 18,
-    paddingHorizontal: 16,
-    marginBottom: 24,
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  statBox: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  statLabel: {
-    fontFamily: FONTS.bold,
-    fontSize: 10,
-    color: COLORS.textMuted,
-    marginBottom: 4,
-    letterSpacing: 1,
-  },
-  statValueClaimed: {
-    fontFamily: FONTS.bold,
-    fontSize: 24,
-    color: COLORS.primary,
-  },
-  statValuePrice: {
-    fontFamily: FONTS.bold,
-    fontSize: 24,
-    color: COLORS.secondary,
-  },
-  statDivider: {
-    width: 1,
-    height: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    fontWeight: '700',
+    color: COLORS.accent,
   },
 });

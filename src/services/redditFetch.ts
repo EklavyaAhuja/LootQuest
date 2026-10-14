@@ -68,7 +68,6 @@ async function recordRateLimit(): Promise<void> {
 }
 
 export async function clearRedditRateLimit(): Promise<void> {
-  if (_rateLimitCount === 0) return; // already clear
   _rateLimitUntil = 0;
   _rateLimitCount = 0;
   try {

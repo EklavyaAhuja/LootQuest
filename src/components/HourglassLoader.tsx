@@ -1,82 +1,105 @@
 import React, { useEffect, useRef } from 'react';
 import { StyleSheet, View, Animated, Easing } from 'react-native';
+import { LinearGradient } from './LinearGradient';
+import { COLORS } from '../theme/theme';
 
 export default function HourglassLoader() {
-  const anim = useRef(new Animated.Value(0)).current;
+  const spin = useRef(new Animated.Value(0)).current;
+  const glow = useRef(new Animated.Value(0)).current;
+  const breathe = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    const startAnimation = () => {
-      anim.setValue(0);
-      Animated.loop(
-        Animated.timing(anim, {
+    const spinLoop = Animated.loop(
+      Animated.timing(spin, {
+        toValue: 1,
+        duration: 2400,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+    const glowLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(glow, {
           toValue: 1,
-          duration: 2000,
-          easing: Easing.linear,
+          duration: 1200,
+          easing: Easing.inOut(Easing.sin),
           useNativeDriver: true,
-        })
-      ).start();
+        }),
+        Animated.timing(glow, {
+          toValue: 0,
+          duration: 1200,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    const breatheLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(breathe, {
+          toValue: 1.06,
+          duration: 1400,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(breathe, {
+          toValue: 1,
+          duration: 1400,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    spinLoop.start();
+    glowLoop.start();
+    breatheLoop.start();
+    return () => {
+      spinLoop.stop();
+      glowLoop.stop();
+      breatheLoop.stop();
     };
+  }, [spin, glow, breathe]);
 
-    startAnimation();
-  }, [anim]);
-
-  // Rotation: 0 to 180 degrees between 80% and 100% of the timeline (0.8 to 1.0)
-  const rotate = anim.interpolate({
-    inputRange: [0, 0.8, 1],
-    outputRange: ['0deg', '0deg', '180deg'],
+  const rotate = spin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
   });
 
-  // Top sand translation: empties downwards (translates from 0 to 30)
-  const topSandTranslateY = anim.interpolate({
-    inputRange: [0, 0.8, 1],
-    outputRange: [0, 30, 30],
-  });
-
-  // Bottom sand translation: fills upwards (translates from 30 to 0)
-  const bottomSandTranslateY = anim.interpolate({
-    inputRange: [0, 0.8, 1],
-    outputRange: [30, 0, 0],
-  });
-
-  // Stream opacity: visible during flow (0.0 to 0.8), hidden during rotation (0.8 to 1.0)
-  const streamOpacity = anim.interpolate({
-    inputRange: [0, 0.05, 0.75, 0.8, 1],
-    outputRange: [0, 1, 1, 0, 0],
+  const opacity = glow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.25, 0.6],
   });
 
   return (
     <View style={styles.container}>
-      <Animated.View style={[styles.hourglass, { transform: [{ rotate }] }]}>
-        {/* Top Flat Frame */}
-        <View style={styles.flatFrame} />
-
-        {/* Top Bulb */}
-        <View style={styles.topBulb}>
-          <Animated.View
-            style={[
-              styles.sand,
-              { transform: [{ translateY: topSandTranslateY }] },
-            ]}
+      {/* Halo */}
+      <Animated.View
+        style={[
+          styles.halo,
+          {
+            opacity,
+            transform: [{ scale: breathe }],
+          },
+        ]}
+      />
+      {/* Orbiting ring */}
+      <Animated.View style={[styles.ring, { transform: [{ rotate }] }]}>
+        <View style={styles.ringDot} />
+      </Animated.View>
+      {/* Core orb */}
+      <Animated.View style={[styles.orbWrap, { transform: [{ scale: breathe }] }]}>
+        <LinearGradient
+          colors={[COLORS.auroraIndigo, COLORS.auroraViolet, COLORS.auroraBlue]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.orb}
+        >
+          <LinearGradient
+            colors={[COLORS.auroraTeal, 'transparent']}
+            start={{ x: 0.2, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.orbSheen}
           />
-        </View>
-
-        {/* Middle Stream Connector */}
-        <View style={styles.middleConnector}>
-          <Animated.View style={[styles.stream, { opacity: streamOpacity }]} />
-        </View>
-
-        {/* Bottom Bulb */}
-        <View style={styles.bottomBulb}>
-          <Animated.View
-            style={[
-              styles.sand,
-              { transform: [{ translateY: bottomSandTranslateY }] },
-            ]}
-          />
-        </View>
-
-        {/* Bottom Flat Frame */}
-        <View style={styles.flatFrame} />
+        </LinearGradient>
       </Animated.View>
     </View>
   );
@@ -86,61 +109,44 @@ const styles = StyleSheet.create({
   container: {
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 10,
+    width: 120,
+    height: 120,
   },
-  hourglass: {
-    width: 44,
-    height: 84,
+  halo: {
+    position: 'absolute',
+    width: 104,
+    height: 104,
+    borderRadius: 52,
+    backgroundColor: COLORS.auroraIndigo,
+  },
+  ring: {
+    position: 'absolute',
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    borderWidth: 1,
+    borderColor: 'rgba(162, 155, 254, 0.4)',
+    borderTopColor: COLORS.auroraTeal,
+    justifyContent: 'flex-start',
     alignItems: 'center',
-    justifyContent: 'center',
   },
-  flatFrame: {
-    width: 38,
-    height: 4,
-    backgroundColor: '#673b14',
-    borderRadius: 2,
-  },
-  topBulb: {
-    width: 32,
-    height: 30,
-    borderWidth: 2,
-    borderColor: '#673b14',
-    borderTopWidth: 0,
-    borderBottomLeftRadius: 16,
-    borderBottomRightRadius: 16,
-    borderTopLeftRadius: 4,
-    borderTopRightRadius: 4,
-    backgroundColor: 'transparent',
-    overflow: 'hidden',
-  },
-  bottomBulb: {
-    width: 32,
-    height: 30,
-    borderWidth: 2,
-    borderColor: '#673b14',
-    borderBottomWidth: 0,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    borderBottomLeftRadius: 4,
-    borderBottomRightRadius: 4,
-    backgroundColor: 'transparent',
-    overflow: 'hidden',
-  },
-  sand: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#f8b13b',
-  },
-  middleConnector: {
+  ringDot: {
     width: 8,
-    height: 12,
-    backgroundColor: 'transparent',
-    justifyContent: 'center',
-    alignItems: 'center',
+    height: 8,
+    borderRadius: 4,
+    marginTop: -4,
+    backgroundColor: COLORS.auroraTeal,
   },
-  stream: {
-    width: 2,
-    height: '100%',
-    backgroundColor: '#f8b13b',
+  orbWrap: {
+    width: 64,
+    height: 64,
+  },
+  orb: {
+    flex: 1,
+    borderRadius: 32,
+    overflow: 'hidden',
+  },
+  orbSheen: {
+    ...StyleSheet.absoluteFillObject,
   },
 });

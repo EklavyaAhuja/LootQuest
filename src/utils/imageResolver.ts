@@ -1,3 +1,5 @@
+import { extractEpicSlug, fetchEpicProductContent } from '../services/EpicGamesEnricher';
+
 /**
  * Utility to resolve cover image URLs for games from their store links and title search.
  */
@@ -116,19 +118,21 @@ async function fetchSteamImageByTitle(title: string): Promise<string | undefined
   return undefined;
 }
 
-
 /**
  * Resolves an image from an Epic Games Store product slug URL via their CDN.
  */
 async function fetchEpicSlugImage(url: string): Promise<string | undefined> {
   try {
-    // Extract slug from Epic URL, e.g. store.epicgames.com/p/wytchwood-android-cad0ea
-    const slugMatch = url.match(/epicgames\.com\/p\/([^/?#]+)/i) ||
-                      url.match(/epicgames\.com\/store\/[^/]+\/product\/([^/?#]+)/i);
-    if (!slugMatch) return undefined;
-    const slug = slugMatch[1];
+    const slug = extractEpicSlug(url);
+    if (!slug) return undefined;
 
-    // Call Epic's catalog API to find the product metadata
+    // 1. Try Epic's official product content API (works for any game in the store, e.g. Voidtrain)
+    const content = await fetchEpicProductContent(slug);
+    if (content?.wideImage) {
+      return content.wideImage;
+    }
+
+    // 2. Fallback to Epic's promotional catalogue API
     const apiUrl = `https://store-site-backend-static-ipv4.ak.epicgames.com/freeGamesPromotions?locale=en-US&country=US&allowCountries=US`;
     const resp = await fetch(apiUrl);
     if (!resp.ok) return undefined;
@@ -156,15 +160,38 @@ async function fetchEpicSlugImage(url: string): Promise<string | undefined> {
 }
 
 /**
+ * Checks if a URL belongs to a known third-party key giveaway host whose og:image
+ * is typically a generic site/community logo rather than game cover art.
+ */
+function isThirdPartyGiveawayHost(url: string): boolean {
+  const lower = url.toLowerCase();
+  return (
+    lower.includes('gaming.lenovo.com') ||
+    lower.includes('alienwarearena.com') ||
+    lower.includes('steelseries.com') ||
+    lower.includes('gleam.io') ||
+    lower.includes('givee.club') ||
+    lower.includes('keymailer.co') ||
+    lower.includes('woovit.com') ||
+    lower.includes('fanatical.com') ||
+    lower.includes('humblebundle.com') ||
+    lower.includes('indiegala.com') ||
+    lower.includes('gamehag.com') ||
+    lower.includes('lootboy.de')
+  );
+}
+
+/**
  * Main export: resolves a cover image given the store URL and optionally the game title.
  * 
  * Resolution order:
  * 1. Direct Steam /app/{id} URL → CDN header.jpg (zero fetch)
- * 2. Epic Games Store URL → Epic catalog API
- * 3. og:image / twitter:image scrape from the page HTML
- * 4. Steam store search by title (best-effort fuzzy match)
+ * 2. Epic Games Store URL → Epic content API / catalog API
+ * 3. If third-party giveaway site (Legion, Gleam, Alienware) + title → Steam store search by title first
+ * 4. og:image / twitter:image scrape from the page HTML
+ * 5. Steam store search by title (best-effort match)
  */
-export async function fetchImageFromUrl(url: string, title?: string): Promise<string | undefined> {
+export async function fetchImageFromUrl(url?: string, title?: string): Promise<string | undefined> {
   if (!url && !title) return undefined;
 
   try {
@@ -192,7 +219,13 @@ export async function fetchImageFromUrl(url: string, title?: string): Promise<st
         if (epicImg) return epicImg;
       }
 
-      // 3. Fetch page HTML and extract og:image / twitter:image
+      // 3. For third-party giveaway hosts (Legion, Gleam, Alienware), prefer official Steam game art over generic site logo
+      if (isThirdPartyGiveawayHost(url) && title) {
+        const steamImg = await fetchSteamImageByTitle(title);
+        if (steamImg) return steamImg;
+      }
+
+      // 4. Fetch page HTML and extract og:image / twitter:image
       try {
         let fetchUrl = url;
         if (fetchUrl.toLowerCase().includes('reddit.com') && !fetchUrl.toLowerCase().includes('old.reddit.com')) {
@@ -241,7 +274,7 @@ export async function fetchImageFromUrl(url: string, title?: string): Promise<st
       }
     }
 
-    // 4. Title-based Steam store search (fallback for task/giveaway URLs)
+    // 5. Title-based Steam store search (fallback for task/giveaway URLs)
     if (title) {
       const steamImg = await fetchSteamImageByTitle(title);
       if (steamImg) return steamImg;

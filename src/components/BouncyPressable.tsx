@@ -1,14 +1,12 @@
 import React, { useRef } from 'react';
 import { Pressable, StyleSheet, View, Animated, ViewStyle, StyleProp } from 'react-native';
-import { COLORS } from '../theme/theme';
+import { COLORS, RADIUS, SHADOWS } from '../theme/theme';
 
 interface BouncyPressableProps {
   children: React.ReactNode;
   onPress?: () => void;
   style?: StyleProp<ViewStyle>;
   contentStyle?: StyleProp<ViewStyle>;
-  shadowColor?: string;
-  shadowOffsetSize?: number;
   backgroundColor?: string;
   disabled?: boolean;
   borderRadius?: number;
@@ -16,49 +14,38 @@ interface BouncyPressableProps {
   borderColor?: string;
 }
 
-export default function BouncyPressable({
+const BouncyPressable = React.memo(function BouncyPressable({
   children,
   onPress,
   style,
   contentStyle,
-  shadowColor = COLORS.shadow,
-  shadowOffsetSize = 5,
-  backgroundColor = COLORS.white,
+  backgroundColor = COLORS.bgCard,
   disabled = false,
-  borderRadius = 16,
-  borderWidth = 3,
+  borderRadius = RADIUS.md,
+  borderWidth = 1,
   borderColor = COLORS.border,
 }: BouncyPressableProps) {
-  const animatedValue = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () => {
     if (disabled) return;
-    Animated.timing(animatedValue, {
-      toValue: 1,
-      duration: 60,
+    Animated.spring(scaleAnim, {
+      toValue: 0.97,
+      friction: 6,
+      tension: 100,
       useNativeDriver: true,
     }).start();
   };
 
   const handlePressOut = () => {
     if (disabled) return;
-    Animated.timing(animatedValue, {
-      toValue: 0,
-      duration: 100,
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 5,
+      tension: 90,
       useNativeDriver: true,
     }).start();
   };
-
-  // Translate the card down-right to cover the shadow
-  const translateX = animatedValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, shadowOffsetSize],
-  });
-
-  const translateY = animatedValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, shadowOffsetSize],
-  });
 
   return (
     <Pressable
@@ -68,55 +55,32 @@ export default function BouncyPressable({
       disabled={disabled}
       style={style}
     >
-      <View style={styles.wrapper}>
-        {/* 1. The Shadow Box in the Back */}
-        <View
-          style={[
-            styles.shadow,
-            {
-              backgroundColor: shadowColor,
-              borderRadius: borderRadius,
-              borderWidth: borderWidth,
-              borderColor: borderColor,
-              // Offset size matches the animation translation
-              top: shadowOffsetSize,
-              left: shadowOffsetSize,
-              right: -shadowOffsetSize,
-              bottom: -shadowOffsetSize,
-            },
-          ]}
-        />
-
-        {/* 2. The Animated Card Content in the Front */}
-        <Animated.View
-          style={[
-            styles.card,
-            {
-              backgroundColor: backgroundColor,
-              borderRadius: borderRadius,
-              borderWidth: borderWidth,
-              borderColor: borderColor,
-              transform: [{ translateX }, { translateY }],
-            },
-            contentStyle,
-          ]}
-        >
-          {children}
-        </Animated.View>
-      </View>
+      <Animated.View
+        style={[
+          styles.card,
+          {
+            backgroundColor,
+            borderRadius,
+            borderWidth,
+            borderColor,
+            transform: [{ scale: scaleAnim }],
+            ...SHADOWS.card,
+          },
+          contentStyle,
+        ]}
+      >
+        {children}
+      </Animated.View>
     </Pressable>
   );
-}
+});
+
+export default BouncyPressable;
 
 const styles = StyleSheet.create({
-  wrapper: {
-    position: 'relative',
-  },
-  shadow: {
-    position: 'absolute',
-  },
   card: {
-    // Normal container layout
     overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

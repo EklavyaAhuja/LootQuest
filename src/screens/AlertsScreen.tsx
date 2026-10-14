@@ -1,590 +1,293 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { StyleSheet, Text, View, ScrollView, Image, Animated, Easing } from 'react-native';
-import { COLORS, FONTS } from '../theme/theme';
-import BouncyPressable from '../components/BouncyPressable';
-import { User, Clock } from 'lucide-react-native';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import {
+  StyleSheet,
+  Text,
+  View,
+  ScrollView,
+  Pressable,
+  Animated,
+} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
-import Svg, { Circle, Line, Path, Defs, LinearGradient, Stop, Filter, FeGaussianBlur } from 'react-native-svg';
-import { getCachedDeal } from '../services/DealCache';
+import { COLORS, FONTS } from '../theme/theme';
+import { timeAgo } from '../utils/time';
+import StoreIcon, { storeShortName } from '../components/StoreIcon';
 import { Deal } from '../models/Deal';
-import { normalizeTitle } from '../utils/dealUtils';
+import { AlertsSkeleton, useSkeletonDisplay } from '../components/LootSkeleton';
+import { dealsStore } from '../services/dealsStore';
 
-interface AlertItem {
+const ALERTS_STORAGE_KEY = 'fgf_notification_logs_v2';
+const ALERT_CHIPS = ['All', 'Live now', 'Steam', 'Epic Games'];
+
+interface AlertLog {
   id: string;
   title: string;
   description: string;
   timestamp: number;
   platform: string;
-  isLive?: boolean;
-  claimedCount?: string;
-  actionType?: 'claim' | 'details';
+  isLive: boolean;
   actionUrl?: string;
-  isExpired?: boolean;
-  coverImage?: string;
-}
-
-const COVER_IMAGES = [
-  'https://images.unsplash.com/photo-1538481199705-c710c4e965fc?auto=format&fit=crop&w=600&q=80',
-  'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=600&q=80',
-  'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=600&q=80',
-  'https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=600&q=80',
-];
-
-const RadarAnimation = () => {
-  const rotateAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    // Continuous 360-degree rotation loop (3 seconds duration, constant angular velocity)
-    const rotateAnimation = Animated.loop(
-      Animated.timing(rotateAnim, {
-        toValue: 1,
-        duration: 3000,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      })
-    );
-    rotateAnimation.start();
-    return () => rotateAnimation.stop();
-  }, []);
-
-  const rotate = rotateAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '360deg'],
-  });
-
-  // Interpolation helper for blip dots to simulate phosphor decay and scale up on sweep crossing
-  const getDotStyle = (p: number, x: number, y: number) => {
-    const peak = p;
-    const prePeak = (p - 0.02 + 1) % 1;
-    const postDecay = (p + 0.30) % 1; // 30% cycle fade decay
-
-    const keyframes = [
-      { t: prePeak, opacity: 0.15, scale: 1.0 },
-      { t: peak, opacity: 1.0, scale: 2.2 },
-      { t: postDecay, opacity: 0.15, scale: 1.0 }
-    ];
-
-    keyframes.sort((a, b) => a.t - b.t);
-
-    const interpolateValues = (t: number) => {
-      // Find interval
-      for (let i = 0; i < keyframes.length; i++) {
-        const k1 = keyframes[i];
-        const k2 = keyframes[(i + 1) % keyframes.length];
-
-        if (k2.t > k1.t) {
-          if (t >= k1.t && t <= k2.t) {
-            const ratio = (t - k1.t) / (k2.t - k1.t);
-            return {
-              opacity: k1.opacity + ratio * (k2.opacity - k1.opacity),
-              scale: k1.scale + ratio * (k2.scale - k1.scale),
-            };
-          }
-        } else {
-          if (t >= k1.t || t <= k2.t) {
-            const dist = (k2.t - k1.t + 1) % 1;
-            const progress = (t - k1.t + 1) % 1;
-            const ratio = progress / dist;
-            return {
-              opacity: k1.opacity + ratio * (k2.opacity - k1.opacity),
-              scale: k1.scale + ratio * (k2.scale - k1.scale),
-            };
-          }
-        }
-      }
-      return { opacity: 0.15, scale: 1.0 };
-    };
-
-    const valAt0 = interpolateValues(0);
-
-    const inputs: number[] = [0];
-    const opacities: number[] = [valAt0.opacity];
-    const scales: number[] = [valAt0.scale];
-
-    keyframes.forEach(k => {
-      if (k.t > 0.001 && k.t < 0.999) {
-        inputs.push(k.t);
-        opacities.push(k.opacity);
-        scales.push(k.scale);
-      }
-    });
-
-    inputs.push(1);
-    opacities.push(valAt0.opacity);
-    scales.push(valAt0.scale);
-
-    const dotOpacity = rotateAnim.interpolate({
-      inputRange: inputs,
-      outputRange: opacities,
-    });
-
-    const dotScale = rotateAnim.interpolate({
-      inputRange: inputs,
-      outputRange: scales,
-    });
-
-    return {
-      opacity: dotOpacity,
-      transform: [
-        { translateX: x - 2 },
-        { translateY: y - 2 },
-        { scale: dotScale }
-      ],
-    };
-  };
-
-  // Fixed stationary dot configurations (X, Y in 100x100 space, p is clockwise fraction from 12 o'clock)
-  const dot1Style = getDotStyle(0.1476, 70, 35);
-  const dot2Style = getDotStyle(0.8750, 30, 30);
-  const dot3Style = getDotStyle(0.6640, 25, 65);
-  const dot4Style = getDotStyle(0.3436, 80, 70);
-  const dot5Style = getDotStyle(0.4760, 55, 83);
-
-  return (
-    <View style={styles.radarWrapper}>
-      {/* 1. Static Background Rings */}
-      <Svg width={100} height={100} style={StyleSheet.absoluteFill}>
-        {/* Outer Ring */}
-        <Circle cx={50} cy={50} r={44} stroke="rgba(46, 139, 87, 0.25)" strokeWidth={1} fill="transparent" />
-        {/* Middle Dashed Ring */}
-        <Circle cx={50} cy={50} r={32} stroke="rgba(46, 139, 87, 0.2)" strokeWidth={1} strokeDasharray="3, 3" fill="transparent" />
-      </Svg>
-
-      {/* 2. Center Circle Overlay (sits under rotating sweep, but above rings) */}
-      <Svg width={100} height={100} style={StyleSheet.absoluteFill}>
-        {/* Dark solid circle with stroke */}
-        <Circle cx={50} cy={50} r={18} fill={COLORS.surfaceCharcoal} stroke="rgba(46, 139, 87, 0.45)" strokeWidth={1} />
-        {/* Inner dashed ring */}
-        <Circle cx={50} cy={50} r={10} stroke="rgba(46, 139, 87, 0.3)" strokeWidth={1} strokeDasharray="2, 2" fill="transparent" />
-      </Svg>
-
-      {/* 3. Rotating Sweep (rendered on top of center circle overlay and rings) */}
-      <Animated.View style={[styles.radarSweep, { transform: [{ rotate }] }]}>
-        <Svg width={100} height={100}>
-          <Defs>
-            {/* Blur filter to make the seagreen light spread out and glow */}
-            <Filter id="radarGlow" x="-20%" y="-20%" width="140%" height="140%">
-              <FeGaussianBlur stdDeviation="3" />
-            </Filter>
-            {/* Symmetrical linear gradient centered around the dashed line */}
-            <LinearGradient id="sweepGrad" x1="0" y1="0" x2="1" y2="0">
-              <Stop offset="0%" stopColor="rgba(46, 139, 87, 0.0)" />
-              <Stop offset="50%" stopColor="rgba(46, 139, 87, 0.85)" />
-              <Stop offset="100%" stopColor="rgba(46, 139, 87, 0.0)" />
-            </LinearGradient>
-          </Defs>
-          {/* Blurred seagreen 90-degree sector centered around the dashed line */}
-          <Path d="M 50 50 L 18.9 18.9 A 44 44 0 0 1 81.1 18.9 Z" fill="url(#sweepGrad)" filter="url(#radarGlow)" />
-          {/* Sharp cyan glow along the leading edge */}
-          <Line x1={50} y1={50} x2={50} y2={6} stroke="#5de6ff" strokeWidth={1.2} opacity={0.6} />
-          {/* Sharp dashed sweep line (white) directly at the leading edge */}
-          <Line x1={50} y1={50} x2={50} y2={6} stroke="#ffffff" strokeWidth={1.5} strokeDasharray="3, 3" />
-        </Svg>
-      </Animated.View>
-
-      {/* 4. Target Blip Dots */}
-      <Animated.View style={[styles.dot, dot1Style]} />
-      <Animated.View style={[styles.dot, dot2Style]} />
-      <Animated.View style={[styles.dot, dot3Style]} />
-      <Animated.View style={[styles.dot, dot4Style]} />
-      <Animated.View style={[styles.dot, dot5Style]} />
-    </View>
-  );
-};
-
-// Helper to extract Steam App ID from URL
-function extractSteamAppId(url?: string): string | null {
-  if (!url) return null;
-  const match = url.match(/\/app\/(\d+)/i);
-  return match ? match[1] : null;
-}
-
-// Helper to extract Reddit post ID (e.g. 15x123) from a full ID or URL
-function extractRedditId(idOrUrl?: string): string | null {
-  if (!idOrUrl) return null;
-  
-  if (idOrUrl.includes('reddit.com') && idOrUrl.includes('/comments/')) {
-    const match = idOrUrl.match(/\/comments\/([a-z0-9]{5,8})/i);
-    if (match) return match[1];
-  }
-  
-  const lastPart = idOrUrl.split(':').pop() || '';
-  const cleanId = lastPart.replace('t3_', '').trim();
-  if (/^[a-z0-9]{5,10}$/i.test(cleanId) && !idOrUrl.startsWith('gp_')) {
-    return cleanId;
-  }
-  return null;
-}
-
-// Helper to clean URL for comparison
-function cleanUrlForComparison(url?: string): string {
-  if (!url) return '';
-  try {
-    const u = new URL(url);
-    return (u.hostname + u.pathname).toLowerCase().replace(/\/$/, '');
-  } catch {
-    return url.toLowerCase().replace(/https?:\/\//, '').replace(/\/$/, '');
-  }
+  isAnnouncement?: boolean;
 }
 
 export default function AlertsScreen() {
-  const [alerts, setAlerts] = useState<AlertItem[]>([]);
-  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+  const [alerts, setAlerts] = useState<AlertLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedFilter, setSelectedFilter] = useState('All');
+  const [feedDeals, setFeedDeals] = useState<Deal[]>([]);
 
-  const handleImageError = (id: string) => {
-    setImageErrors(prev => ({ ...prev, [id]: true }));
-  };
-
-  // Load alert logs and reset the unread alerts count
   useEffect(() => {
-    const loadAlertsAndReset = async () => {
-      try {
-        const raw = await AsyncStorage.getItem('fgf_notification_logs_v2');
-        if (raw) {
+    loadAlerts();
+    AsyncStorage.getItem('fgf_merged_feed_cache').then((raw) => {
+      if (raw) {
+        try {
           const parsed = JSON.parse(raw);
-          const filtered = parsed.filter((alert: any) =>
-            alert.id !== 'alert_1' &&
-            alert.id !== 'alert_2' &&
-            alert.id !== 'alert_3' &&
-            !/neon nexus/i.test(alert.title) &&
-            !/void runner x/i.test(alert.title) &&
-            !/synthwave/i.test(alert.title)
-          );
-          // Retrieve current feed cache to instantly resolve thumbnails
-          const feedCacheRaw = await AsyncStorage.getItem('fgf_merged_feed_cache');
-          const feedDeals: Deal[] = feedCacheRaw ? JSON.parse(feedCacheRaw) : [];
-          // Asynchronously enrich alerts with cached deal thumbnails
-          const enrichedAlerts = await Promise.all(
-            filtered.map(async (alert: any) => {
-              if (!alert.coverImage) {
-                const alertRedditId = extractRedditId(alert.id) || extractRedditId(alert.actionUrl);
-                const alertCleanUrl = alert.actionUrl ? cleanUrlForComparison(alert.actionUrl) : '';
-                const alertNormTitle = normalizeTitle(alert.title);
-                const alertSteamAppId = extractSteamAppId(alert.actionUrl);
-
-                // 1. Try matching with active feed deals first (most up-to-date images)
-                let matchedImage: string | undefined = undefined;
-                let matchedDealId: string | undefined = undefined;
-
-                for (const deal of feedDeals) {
-                  // Match by ID exactly
-                  let isMatch = deal.id === alert.id;
-
-                  // Match by Reddit ID
-                  if (!isMatch && alertRedditId) {
-                    const dealRedditId = extractRedditId(deal.id) || extractRedditId(deal.redditUrl) || extractRedditId(deal.url);
-                    if (dealRedditId && dealRedditId === alertRedditId) {
-                      isMatch = true;
-                    }
-                  }
-
-                  // Match by Steam App ID
-                  if (!isMatch && alertSteamAppId) {
-                    const dealSteamAppId = extractSteamAppId(deal.url);
-                    if (dealSteamAppId && dealSteamAppId === alertSteamAppId) {
-                      isMatch = true;
-                    }
-                  }
-
-                  // Match by Clean URL
-                  if (!isMatch && alertCleanUrl) {
-                    const dealCleanUrl = deal.url ? cleanUrlForComparison(deal.url) : '';
-                    const dealRedditCleanUrl = deal.redditUrl ? cleanUrlForComparison(deal.redditUrl) : '';
-                    if (dealCleanUrl === alertCleanUrl || dealRedditCleanUrl === alertCleanUrl) {
-                      isMatch = true;
-                    }
-                  }
-
-                  // Match by Canonical Title & Platform
-                  if (!isMatch) {
-                    const dealNormTitle = normalizeTitle(deal.title);
-                    const isSamePlatform = 
-                      alert.platform.toLowerCase() === deal.platform.toLowerCase() ||
-                      (alert.platform.toLowerCase().includes('epic') && deal.platform.toLowerCase().includes('epic')) ||
-                      (alert.platform.toLowerCase().includes('steam') && deal.platform.toLowerCase().includes('steam'));
-                    if (isSamePlatform && alertNormTitle && alertNormTitle === dealNormTitle) {
-                      isMatch = true;
-                    }
-                  }
-
-                  if (isMatch) {
-                    matchedDealId = deal.id;
-                    if (deal.image && deal.image !== 'placeholder') {
-                      matchedImage = deal.image;
-                      break;
-                    }
-                  }
-                }
-
-                if (matchedImage) {
-                  return { ...alert, coverImage: matchedImage };
-                }
-
-                // 2. Fallback to DealCache
-                const cacheKeysToTry = new Set<string>();
-                cacheKeysToTry.add(alert.id);
-                if (alertRedditId) {
-                  cacheKeysToTry.add(alertRedditId);
-                  cacheKeysToTry.add(`t3_${alertRedditId}`);
-                }
-                if (matchedDealId) {
-                  cacheKeysToTry.add(matchedDealId);
-                }
-
-                for (const cacheKey of cacheKeysToTry) {
-                  try {
-                    const cachedDeal = await getCachedDeal(cacheKey);
-                    if (cachedDeal && cachedDeal.image && cachedDeal.image !== 'placeholder') {
-                      return { ...alert, coverImage: cachedDeal.image };
-                    }
-                  } catch (e) {
-                    console.warn(`[AlertsScreen] Error loading DealCache for key ${cacheKey}:`, e);
-                  }
-                }
-              }
-              return alert;
-            })
-          );
-          setAlerts(enrichedAlerts);
-          if (filtered.length !== parsed.length) {
-            await AsyncStorage.setItem('fgf_notification_logs_v2', JSON.stringify(filtered));
-          }
-        } else {
-          setAlerts([]);
-        }
-        await AsyncStorage.setItem('fgf_unread_alerts_count', '0');
-      } catch (e) {
-        console.error('Error loading alerts or resetting unread count:', e);
+          if (Array.isArray(parsed)) setFeedDeals(parsed);
+        } catch {}
       }
-    };
-    loadAlertsAndReset();
+    });
+
+    const unsub = dealsStore.subscribe(() => {
+      setFeedDeals(dealsStore.getActiveDeals());
+    });
+    return () => unsub();
   }, []);
 
-  const clearAlerts = async () => {
+  const loadAlerts = async () => {
+    setLoading(true);
     try {
-      await AsyncStorage.removeItem('fgf_notification_logs_v2');
-      setAlerts([]);
-    } catch (e) {
-      console.error(e);
+      const raw = await AsyncStorage.getItem(ALERTS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const sanitized = parsed.filter(
+            (a: AlertLog) =>
+              !a.title?.toLowerCase().includes('fireside feelings') &&
+              !a.title?.toLowerCase().includes('fishermurs') &&
+              !a.title?.toLowerCase().includes('slavistan')
+          );
+          if (sanitized.length > 0) {
+            setAlerts(sanitized);
+            return;
+          }
+        }
+      }
+
+      // If no stored alerts yet, populate from active deals
+      const live = dealsStore.getActiveDeals().slice(0, 5);
+      if (live.length > 0) {
+        const initial = live.map((d) => ({
+          id: d.id,
+          title: d.title,
+          description: `Free ${d.type || 'game'} on ${d.platform}! Claim it now.`,
+          timestamp: d.createdAt || Date.now(),
+          platform: d.platform,
+          isLive: !d.isExpired && d.expiryStatus !== 'EXPIRED',
+          actionUrl: d.giveawayUrl || d.url,
+          isAnnouncement: false,
+        }));
+        setAlerts(initial);
+        AsyncStorage.setItem(ALERTS_STORAGE_KEY, JSON.stringify(initial)).catch(() => {});
+      }
+    } catch {} finally {
+      setLoading(false);
     }
   };
 
-  const getRelativeTime = (timestamp: number) => {
-    const diff = Date.now() - timestamp;
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'Just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
+  const handleClear = async () => {
+    setAlerts([]);
+    try {
+      await AsyncStorage.removeItem(ALERTS_STORAGE_KEY);
+    } catch {}
   };
 
-  const getGameCover = useCallback((id: string) => {
-    let sum = 0;
-    for (let i = 0; i < id.length; i++) {
-      sum += id.charCodeAt(i);
+  const handleOpenAction = async (url?: string) => {
+    if (!url) return;
+    try {
+      await WebBrowser.openBrowserAsync(url);
+    } catch {}
+  };
+
+  // Determine if an alert's deal is still active
+  const isAlertActive = useCallback(
+    (alert: AlertLog): boolean => {
+      if (alert.isLive === false) return false;
+      if (feedDeals.length > 0) {
+        const match = feedDeals.find(
+          (d) =>
+            d.id === alert.id ||
+            d.title.toLowerCase().trim() === alert.title.toLowerCase().trim()
+        );
+        if (match) {
+          return !match.isExpired && match.expiryStatus !== 'EXPIRED';
+        }
+      }
+      const ageMs = Date.now() - alert.timestamp;
+      if (ageMs > 7 * 86400000) return false;
+      return alert.isLive ?? true;
+    },
+    [feedDeals]
+  );
+
+  // Active alerts count for header
+  const liveCount = useMemo(() => {
+    return alerts.filter((a) => isAlertActive(a)).length;
+  }, [alerts, isAlertActive]);
+
+  // Round 3 Item 9: Move ended alerts below active ones
+  const sortedAlerts = useMemo(() => {
+    const activeList = alerts.filter((a) => isAlertActive(a));
+    const endedList = alerts.filter((a) => !isAlertActive(a));
+    activeList.sort((a, b) => b.timestamp - a.timestamp);
+    endedList.sort((a, b) => b.timestamp - a.timestamp);
+    return [...activeList, ...endedList];
+  }, [alerts, isAlertActive]);
+
+  const filteredAlerts = useMemo(() => {
+    let list = sortedAlerts;
+    if (selectedFilter === 'Live now') {
+      list = list.filter((a) => isAlertActive(a));
+    } else if (selectedFilter !== 'All') {
+      const f = selectedFilter.toLowerCase();
+      list = list.filter((a) => (a.platform || '').toLowerCase().includes(f));
     }
-    return COVER_IMAGES[sum % COVER_IMAGES.length];
-  }, []);
+    return list;
+  }, [sortedAlerts, selectedFilter, isAlertActive]);
+
+  const { showSkeleton, contentFadeAnim } = useSkeletonDisplay(loading, 400);
+
+  if (showSkeleton) {
+    return <AlertsSkeleton />;
+  }
 
   return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Alerts Status Banner */}
+    <Animated.View style={[{ flex: 1, backgroundColor: COLORS.bg, opacity: contentFadeAnim }]}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Top Header Row (.top) */}
+        <View style={styles.topRow}>
+          <Text style={styles.heading}>Drop{'\n'}Radar.</Text>
+          <Pressable onPress={handleClear} hitSlop={12} style={{ marginTop: 8 }}>
+            <Text style={styles.clearBtnText}>Clear</Text>
+          </Pressable>
+        </View>
+
+        {/* Round 4 Item 5: Exact rewrite */}
+        <Text style={styles.subtitle}>New free games, as they go live.</Text>
+
+        {/* Radar Monitor Status Banner */}
         <View style={styles.statusBanner}>
-          <View style={styles.bannerRow}>
-            {/* Left Content Column */}
-            <View style={styles.bannerTextCol}>
-              <View style={styles.bannerHeader}>
-                <Text style={styles.bannerTitle}>SCANNER STATUS</Text>
-                <View style={styles.uptimeBadge}>
-                  <Text style={styles.uptimeText}>UPTIME 99.9%</Text>
-                </View>
-              </View>
-
-              <View style={styles.bannerStatusRow}>
-                <View style={styles.statusDot} />
-                <Text style={styles.bannerStatusText}>System Active</Text>
-              </View>
-
-              <Text style={styles.bannerInfo}>
-                Searching for free loot
-              </Text>
+          <View style={styles.statusLeft}>
+            <View style={styles.radarActiveRow}>
+              <View style={styles.dot} />
+              {/* Round 4 Item 5: Exact rewrite */}
+              <Text style={styles.radarActiveLabel}>WATCHING FOR NEW DROPS</Text>
             </View>
-
-            {/* Right Radar Column */}
-            <View style={styles.radarCol}>
-              <RadarAnimation />
-            </View>
-          </View>
-        </View>
-
-        {/* Header with Clear Button */}
-        <View style={styles.sectionHeaderContainer}>
-          <Text style={styles.sectionTitle}>Recent Alerts</Text>
-          {alerts.length > 0 && (
-            <BouncyPressable
-              onPress={clearAlerts}
-              backgroundColor="transparent"
-              borderRadius={20}
-              shadowOffsetSize={0}
-              style={styles.clearLogsBtnWrapper}
-              contentStyle={styles.clearLogsBtn}
-            >
-              <Text style={styles.clearLogsBtnText}>CLEAR LOGS</Text>
-            </BouncyPressable>
-          )}
-        </View>
-
-        {/* List of Alerts */}
-        {alerts.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyTitle}>ALL CAUGHT UP!</Text>
-            <Text style={styles.emptySub}>
-              New freebie findings will register here in the background.
+            {/* Round 4 Item 5: Exact rewrite - counts only active deals */}
+            <Text style={styles.radarActiveSub}>
+              {liveCount} live right now
             </Text>
           </View>
-        ) : (
-          <View style={styles.alertList}>
-            {alerts.map((alert) => {
-              const isEpic = alert.platform.toLowerCase().includes('epic');
-              const isSteam = alert.platform.toLowerCase().includes('steam');
-              const isGog = alert.platform.toLowerCase().includes('gog');
-              const isAnnouncement = alert.platform.toLowerCase().includes('announcement');
-              const relativeTime = getRelativeTime(alert.timestamp);
-              const coverUri = alert.coverImage || getGameCover(alert.id);
-              const progressPercent = alert.isExpired ? 100 : 30;
+          {/* Big count only counts active deals */}
+          <Text style={styles.radarCountNumber}>{liveCount}</Text>
+        </View>
 
-              return (
-                <View key={alert.id} style={[styles.alertCard, alert.isExpired && styles.alertCardExpired]}>
-                  {/* Cover Image sitting on top */}
-                  <View style={styles.cardImageContainer}>
-                    {(!imageErrors[alert.id] && coverUri) ? (
-                      <Image
-                        source={{ uri: coverUri }}
-                        style={styles.cardImage}
-                        onError={() => handleImageError(alert.id)}
-                      />
-                    ) : (
-                      <View style={styles.cardImagePlaceholder}>
-                        <Text style={styles.placeholderIcon}>🎮</Text>
-                      </View>
-                    )}
-                    <View style={styles.cardImageGradient} />
-                  </View>
+        {/* Round 3 Item 5: Plain text filter tabs with 1px underline on active, horizontally scrollable */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chipsScroll}
+        >
+          {ALERT_CHIPS.map((chip) => {
+            const isActive = selectedFilter === chip;
+            return (
+              <Pressable
+                key={chip}
+                onPress={() => setSelectedFilter(chip)}
+                style={[styles.plainTab, isActive && styles.plainTabActive]}
+              >
+                {(chip === 'Steam' || chip === 'Epic Games') && (
+                  <StoreIcon
+                    store={chip}
+                    size={12}
+                    color={isActive ? '#EDEDEB' : '#86868B'}
+                  />
+                )}
+                <Text style={[styles.plainTabText, isActive && styles.plainTabTextActive]}>
+                  {chip}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
 
-                  {/* Content Section overlapping image */}
-                  <View style={styles.cardContent}>
-                    {/* Top Row: Badges & Timestamp */}
-                    <View style={styles.alertHeaderRow}>
-                      <View style={styles.alertBadges}>
-                        <View style={[
-                          styles.platformBadge,
-                          isSteam && styles.platformBadgeSteam,
-                          isEpic && styles.platformBadgeEpic,
-                          isGog && styles.platformBadgeGog,
-                          isAnnouncement && styles.platformBadgeAnnouncement
-                        ]}>
-                          <Text style={styles.platformBadgeText}>{alert.platform.toUpperCase()}</Text>
-                        </View>
+        {/* Log Timeline (.log) */}
+        <View style={styles.log}>
+          {filteredAlerts.map((item) => {
+            const isActiveDeal = isAlertActive(item);
+            return (
+              <View key={item.id} style={styles.logItem}>
+                {/* Timeline Dot Marker (no accent glows) */}
+                <View
+                  style={[
+                    styles.timelineDot,
+                    !isActiveDeal && styles.timelineDotEnded,
+                  ]}
+                />
 
-                        {alert.isLive && (
-                          <View style={styles.liveNowBadge}>
-                            <Text style={styles.liveNowText}>LIVE NOW</Text>
-                          </View>
-                        )}
-                      </View>
-
-                      <Text style={styles.relativeTimeText}>{relativeTime}</Text>
-                    </View>
-
-                    {/* Title */}
-                    <Text style={[styles.alertTitle, alert.isExpired && styles.alertTitleExpired]}>
-                      {alert.title}
+                {/* Meta */}
+                {item.isAnnouncement || item.platform?.toLowerCase() === 'announcement' ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <Text style={[styles.logMeta, { color: '#F59E0B', fontWeight: '700' }]}>
+                      ANNOUNCEMENT · {timeAgo(item.timestamp)}
                     </Text>
-
-                    {/* Status Block */}
-                    <View style={styles.statusBlock}>
-                      <View style={styles.statusRow}>
-                        <View style={styles.timerWrapper}>
-                          <Text style={[
-                            styles.timerIconText,
-                            { color: alert.isExpired ? COLORS.warning : COLORS.success }
-                          ]}>🕒</Text>
-                          <Text style={[
-                            styles.timerText,
-                            { color: alert.isExpired ? COLORS.warning : COLORS.success }
-                          ]}>
-                            {alert.isExpired ? 'EXPIRED' : 'ACTIVE'}
-                          </Text>
-                        </View>
-                        <Text style={[
-                          styles.statusLabel,
-                          { color: alert.isExpired ? COLORS.warning : COLORS.success }
-                        ]}>
-                          {alert.isExpired ? 'ENDED' : 'LIVE'}
-                        </Text>
-                      </View>
-
-                      {/* Expiry Progress Bar */}
-                      <View style={styles.progressBarBg}>
-                        <View style={[
-                          styles.progressBarFill,
-                          {
-                            width: `${progressPercent}%`,
-                            backgroundColor: alert.isExpired ? COLORS.warning : COLORS.success
-                          }
-                        ]} />
-                      </View>
-                    </View>
-
-                    {/* Description */}
-                    <Text style={[styles.alertDesc, alert.isExpired && styles.alertDescExpired]}>
-                      {alert.description}
-                    </Text>
-
-                    {/* Bottom Row */}
-                    {!alert.isExpired && (
-                      <View style={styles.alertBottomRow}>
-                        <View style={styles.alertMetricRow}>
-                          {alert.actionType === 'claim' ? (
-                            <User size={14} color="#858585" />
-                          ) : (
-                            <Clock size={14} color="#858585" />
-                          )}
-                          <Text style={styles.alertMetricText}>{alert.claimedCount || 'Active'}</Text>
-                        </View>
-
-                        <BouncyPressable
-                          onPress={() => alert.actionUrl && WebBrowser.openBrowserAsync(alert.actionUrl)}
-                          backgroundColor={alert.actionType === 'claim' ? COLORS.primary : COLORS.surfaceHigh}
-                          borderRadius={20}
-                          shadowOffsetSize={0}
-                          style={styles.alertActionBtnWrapper}
-                          contentStyle={[
-                            styles.alertActionBtn,
-                            alert.actionType === 'details' && { borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }
-                          ]}
-                        >
-                          <Text style={[
-                            styles.alertActionBtnText,
-                            { color: alert.actionType === 'claim' ? '#131313' : COLORS.text }
-                          ]}>
-                            {alert.actionType === 'claim' ? 'Claim Loot' : 'View Details'}
-                          </Text>
-                        </BouncyPressable>
-                      </View>
-                    )}
                   </View>
-                </View>
-              );
-            })}
-          </View>
-        )}
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <StoreIcon
+                      store={item.platform}
+                      size={12}
+                      color={isActiveDeal ? '#86868B' : '#4D4D52'}
+                    />
+                    <Text style={[styles.logMeta, !isActiveDeal && styles.logMetaEnded]}>
+                      {storeShortName(item.platform).toUpperCase()} · {isActiveDeal ? 'LIVE' : 'Ended'} · {timeAgo(item.timestamp)}
+                    </Text>
+                  </View>
+                )}
+
+                {/* Title (h3) */}
+                <Text style={[styles.logTitle, !isActiveDeal && styles.logTitleEnded]}>
+                  {item.title}
+                </Text>
+
+                {/* Description (p) */}
+                <Text style={[styles.logDescription, !isActiveDeal && styles.logDescriptionEnded]}>
+                  {item.description}
+                </Text>
+
+                {/* Action (.go): hidden if deal has ended, or if it is an announcement with no claim link */}
+                {isActiveDeal && !item.isAnnouncement && item.platform?.toLowerCase() !== 'announcement' && item.actionUrl ? (
+                  <Pressable onPress={() => handleOpenAction(item.actionUrl)} hitSlop={8}>
+                    <Text style={styles.goBtnText}>Get →</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            );
+          })}
+
+          {filteredAlerts.length === 0 && (
+            <View style={{ paddingTop: 20 }}>
+              <Text style={{ fontFamily: FONTS.regular, fontSize: 14, color: COLORS.textSecondary }}>
+                No drop alerts matching this filter.
+              </Text>
+            </View>
+          )}
+        </View>
       </ScrollView>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -594,361 +297,163 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg,
   },
   scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
+    paddingHorizontal: 20,
+    paddingTop: 26,
+    paddingBottom: 120,
+  },
+  topRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  heading: {
+    fontFamily: FONTS.serif,
+    fontSize: 56,
+    lineHeight: 56,
+    color: '#EDEDEB',
+    letterSpacing: -1.6,
+  },
+  clearBtnText: {
+    fontFamily: FONTS.regular,
+    fontSize: 14,
+    color: '#86868B',
+  },
+  subtitle: {
+    fontFamily: FONTS.regular,
+    fontSize: 15,
+    color: '#86868B',
+    marginTop: 8,
   },
   statusBanner: {
-    backgroundColor: COLORS.surfaceCharcoal,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-    borderLeftWidth: 4,
-    borderLeftColor: COLORS.success,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 24,
-  },
-  bannerHeader: {
+    marginTop: 26,
+    paddingVertical: 18,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#1C1C1E',
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    alignItems: 'center',
   },
-  bannerTitle: {
-    fontFamily: FONTS.mono,
-    fontSize: 12,
-    color: COLORS.textMuted,
-    letterSpacing: 1,
+  statusLeft: {
+    flex: 1,
   },
-  uptimeBadge: {
-    backgroundColor: 'rgba(78, 224, 130, 0.1)',
-    borderWidth: 1,
-    borderColor: COLORS.success,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  uptimeText: {
-    fontFamily: FONTS.mono,
-    fontSize: 11,
-    color: COLORS.success,
-    fontWeight: 'bold',
-  },
-  bannerStatusRow: {
+  radarActiveRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 8,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: COLORS.success,
-  },
-  bannerStatusText: {
-    fontFamily: FONTS.bold,
-    fontSize: 18,
-    color: COLORS.text,
-  },
-  bannerInfo: {
-    fontFamily: FONTS.medium,
-    fontSize: 14,
-    color: COLORS.textMuted,
-    lineHeight: 20,
-  },
-  sectionHeaderContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-    paddingHorizontal: 4,
-  },
-  sectionTitle: {
-    fontFamily: FONTS.extraBold,
-    fontSize: 22,
-    color: COLORS.text,
-    letterSpacing: 0.5,
-  },
-  clearLogsBtnWrapper: {
-    justifyContent: 'center',
-  },
-  clearLogsBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 20,
-  },
-  clearLogsBtnText: {
-    fontFamily: FONTS.mono,
-    fontSize: 11,
-    color: COLORS.textMuted,
-    letterSpacing: 0.5,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 64,
-    gap: 12,
-  },
-  emptyTitle: {
-    fontFamily: FONTS.extraBold,
-    fontSize: 22,
-    color: COLORS.text,
-    letterSpacing: 0.5,
-  },
-  emptySub: {
-    fontFamily: FONTS.medium,
-    fontSize: 15,
-    color: COLORS.textMuted,
-    textAlign: 'center',
-    maxWidth: 240,
-    lineHeight: 22,
-  },
-  alertList: {
-    gap: 16,
-  },
-  alertCard: {
-    backgroundColor: COLORS.surfaceCharcoal,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 20,
-    elevation: 4,
-  },
-  alertCardExpired: {
-    backgroundColor: 'rgba(255, 36, 73, 0.03)',
-    borderColor: 'rgba(255, 36, 73, 0.15)',
-    opacity: 0.7,
-  },
-  cardImageContainer: {
-    height: 120,
-    width: '100%',
-    position: 'relative',
-  },
-  cardImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  cardImageGradient: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(19, 19, 19, 0.6)',
-  },
-  cardContent: {
-    padding: 16,
-    paddingTop: 8,
-    marginTop: -32,
-    backgroundColor: 'transparent',
-  },
-  alertHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  alertBadges: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  platformBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    backgroundColor: COLORS.surfaceHigh,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  platformBadgeSteam: {
-    backgroundColor: 'rgba(27, 58, 87, 0.25)',
-    borderColor: '#1b3a57',
-  },
-  platformBadgeEpic: {
-    backgroundColor: 'rgba(27, 77, 62, 0.25)',
-    borderColor: '#1b4d3e',
-  },
-  platformBadgeGog: {
-    backgroundColor: 'rgba(77, 42, 51, 0.25)',
-    borderColor: '#4d2a33',
-  },
-  platformBadgeAnnouncement: {
-    backgroundColor: 'rgba(168, 85, 247, 0.25)',
-    borderColor: '#a855f7',
-  },
-  platformBadgeText: {
-    fontFamily: FONTS.mono,
-    fontSize: 10,
-    color: COLORS.text,
-  },
-  liveNowBadge: {
-    backgroundColor: 'rgba(78, 224, 130, 0.1)',
-    borderWidth: 1,
-    borderColor: COLORS.success,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  liveNowText: {
-    fontFamily: FONTS.mono,
-    fontSize: 10,
-    color: COLORS.success,
-  },
-  relativeTimeText: {
-    fontFamily: FONTS.mono,
-    fontSize: 11,
-    color: COLORS.textMuted,
-  },
-  alertTitle: {
-    fontFamily: FONTS.bold,
-    fontSize: 20,
-    color: '#ffffff',
-    lineHeight: 24,
-    marginBottom: 8,
-  },
-  alertTitleExpired: {
-    color: COLORS.textMuted,
-    textDecorationLine: 'line-through',
-  },
-  statusBlock: {
-    backgroundColor: COLORS.bg,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  timerWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  timerIconText: {
-    fontSize: 14,
-  },
-  timerText: {
-    fontFamily: FONTS.mono,
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  statusLabel: {
-    fontFamily: FONTS.bold,
-    fontSize: 10,
-    textTransform: 'uppercase',
-  },
-  progressBarBg: {
-    height: 4,
-    backgroundColor: COLORS.surfaceHigh,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    borderRadius: 2,
-  },
-  alertDesc: {
-    fontFamily: FONTS.medium,
-    fontSize: 14,
-    color: COLORS.onSurfaceVariant,
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  alertDescExpired: {
-    color: COLORS.textMuted,
-    fontStyle: 'italic',
-  },
-  alertBottomRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  alertMetricRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  alertMetricText: {
-    fontFamily: FONTS.mono,
-    fontSize: 11,
-    color: COLORS.textMuted,
-  },
-  alertActionBtnWrapper: {
-    borderRadius: 20,
-    overflow: 'hidden',
-  },
-  alertActionBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  alertActionBtnText: {
-    fontFamily: FONTS.bold,
-    fontSize: 13,
-    letterSpacing: 0.5,
-  },
-  cardImagePlaceholder: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#1e1b29',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  placeholderIcon: {
-    fontSize: 32,
-  },
-  bannerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 16,
-  },
-  bannerTextCol: {
-    flex: 1,
-  },
-  radarCol: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  radarWrapper: {
-    width: 100,
-    height: 100,
-    position: 'relative',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 50,
-    overflow: 'hidden',
-  },
-  radarSweep: {
-    width: 100,
-    height: 100,
-    position: 'absolute',
-    top: 0,
-    left: 0,
   },
   dot: {
-    width: 4,
-    height: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#EDEDEB',
+  },
+  radarActiveLabel: {
+    fontFamily: FONTS.mono,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#86868B',
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+  },
+  radarActiveSub: {
+    fontFamily: FONTS.regular,
+    fontSize: 15,
+    color: '#EDEDEB',
+    marginTop: 8,
+  },
+  radarCountNumber: {
+    fontFamily: FONTS.serif,
+    fontSize: 44,
+    color: '#EDEDEB',
+    lineHeight: 44,
+  },
+  chipsScroll: {
+    gap: 16,
+    marginTop: 20,
+    paddingRight: 20,
+  },
+  plainTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: 'transparent',
+  },
+  plainTabActive: {
+    borderBottomColor: '#EDEDEB',
+  },
+  plainTabText: {
+    fontFamily: FONTS.regular,
+    fontSize: 13,
+    lineHeight: 16,
+    color: '#86868B',
+  },
+  plainTabTextActive: {
+    color: '#EDEDEB',
+    fontWeight: '600',
+  },
+  log: {
+    marginTop: 28,
+    marginLeft: 6,
+    borderLeftWidth: 1,
+    borderLeftColor: '#1C1C1E',
+    paddingLeft: 24,
+  },
+  logItem: {
+    position: 'relative',
+    paddingBottom: 32,
+  },
+  timelineDot: {
     position: 'absolute',
-    borderRadius: 2,
-    backgroundColor: '#ffffff',
-    shadowColor: '#00ffb2',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 3,
-    elevation: 2,
-    top: 0,
-    left: 0,
+    left: -28,
+    top: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#EDEDEB',
+  },
+  timelineDotEnded: {
+    backgroundColor: '#4D4D52',
+  },
+  logMeta: {
+    fontFamily: FONTS.mono,
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#86868B',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  logMetaEnded: {
+    color: '#4D4D52',
+  },
+  logTitle: {
+    fontFamily: FONTS.serif,
+    fontSize: 28,
+    lineHeight: 30,
+    color: '#EDEDEB',
+    letterSpacing: -0.5,
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  logTitleEnded: {
+    color: '#86868B',
+  },
+  logDescription: {
+    fontFamily: FONTS.regular,
+    fontSize: 14,
+    lineHeight: 21,
+    color: '#86868B',
+  },
+  logDescriptionEnded: {
+    color: '#4D4D52',
+  },
+  goBtnText: {
+    fontFamily: FONTS.bold,
+    fontSize: 14,
+    color: '#EDEDEB',
+    marginTop: 12,
   },
 });
-

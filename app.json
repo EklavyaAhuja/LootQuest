@@ -4,15 +4,15 @@
     "slug": "FreeGameFindings_App",
     "scheme": "lootquest",
     "version": "1.2.0",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.2.0",
     "updates": {
-      "url": "https://u.expo.dev/95a4c213-070b-4462-8489-b8d0c433e77b"
+      "url": "https://u.expo.dev/95a4c213-070b-4462-8489-b8d0c433e77b",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
     },
     "orientation": "portrait",
     "icon": "./assets/Icon_Latest.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.freegamefindings.app",
@@ -27,7 +27,7 @@
       "package": "com.freegamefindings.app",
       "googleServicesFile": "./assets/google-services.json",
       "adaptiveIcon": {
-        "backgroundColor": "#0B101E",
+        "backgroundColor": "#000000",
         "foregroundImage": "./assets/Icon_Latest.png"
       },
       "predictiveBackGestureEnabled": false
@@ -46,7 +46,7 @@
         "expo-notifications",
         {
           "icon": "./assets/Icon_Latest.png",
-          "color": "#FFA8A8",
+          "color": "#34D399",
           "sounds": [
             "./assets/long_expected.mp3"
           ]

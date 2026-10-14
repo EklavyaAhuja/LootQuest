@@ -1,4 +1,9 @@
-const { withAndroidManifest } = require('@expo/config-plugins');
+let withAndroidManifest;
+try {
+  withAndroidManifest = require('@expo/config-plugins').withAndroidManifest;
+} catch {
+  withAndroidManifest = require('expo/config-plugins').withAndroidManifest;
+}
 
 module.exports = function withNotificationToolsReplace(config) {
   return withAndroidManifest(config, (config) => {

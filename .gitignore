@@ -44,17 +44,26 @@ yarn-error.*
 Thumbs.db
 *.pem
 
-# ─── IDE / Editor ────────────────────────────────────────────────────────────
+# ─── IDE / Editor / AI Tooling ───────────────────────────────────────────────
 .vscode/
 .idea/
 *.suo
 *.user
 .claude/
 .gemini/
+.agents/
+.opencode/
+opencode.json
+skills-lock.json
 
-# ─── Scratch / Dev notes ─────────────────────────────────────────────────────
+# ─── Scratch / Dev notes / Test scripts ───────────────────────────────────────
 fixes.txt
 scratch/
+scratch_*.js
+test_*.js
+testMatch.js
+screenshots/*.html
 
 # ─── Nested backend service (has its own repo) ────────────────────────────────
 /fgf-backend
+

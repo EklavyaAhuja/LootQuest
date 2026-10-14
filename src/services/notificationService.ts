@@ -1,4 +1,4 @@
-import * as Notifications from 'expo-notifications';
+import { Notifications } from '../utils/expoGoCompat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { fetchFreeGameFindings, RedditPost, parseRedditTitle } from './redditService';
@@ -9,9 +9,11 @@ import { normalizeTitle, getCanonicalPlatform } from '../utils/dealUtils';
 
 let messaging: any = null;
 try {
-  messaging = require('@react-native-firebase/messaging').default;
-  if (__DEV__) {
-    console.log('[NotificationService] Firebase Messaging initialized.');
+  if (Platform.OS !== 'web') {
+    messaging = require('@react-native-firebase/messaging').default;
+    if (__DEV__) {
+      console.log('[NotificationService] Firebase Messaging initialized.');
+    }
   }
 } catch (e) {
   if (__DEV__) {
@@ -24,15 +26,19 @@ const FCM_TOKEN_CACHE_KEY = 'fgf_fcm_token_v1';
 const BACKGROUND_FETCH_TASK = 'FGF_BACKGROUND_FETCH_TASK';
 
 // Configure how notifications are handled when the app is open
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+try {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+} catch {
+  // Expo Go: expo-notifications native handler not available
+}
 
 /**
  * Configure dedicated notification channel on Android for custom sound
@@ -398,6 +404,68 @@ export async function addAlertLog(post: RedditPost): Promise<void> {
 }
 
 /**
+ * Log an incoming push notification (FCM remote or local) directly into Alerts screen storage
+ */
+export async function addAlertLogFromNotification(content: any): Promise<void> {
+  try {
+    if (!content) return;
+    const data = content.data || {};
+    const rawTitle = content.title || data.title || '';
+    const rawBody = content.body || data.body || '';
+    const id = data.postId ? String(data.postId) : `notif_${Date.now()}`;
+    const url = data.url || undefined;
+
+    const isAnnouncement =
+      data.isCustom === 'true' ||
+      data.isCustom === true ||
+      data.type === 'announcement' ||
+      (data.platform || '').toLowerCase() === 'announcement';
+
+    let displayTitle = rawTitle;
+    if (data.gameTitle) {
+      displayTitle = data.gameTitle;
+    } else if (data.redditTitle) {
+      displayTitle = data.redditTitle.replace(/^\[[^\]]+\]\s*/, '').replace(/\([^)]+\)\s*/, '').trim();
+    } else if (rawTitle.startsWith('🆓 ')) {
+      displayTitle = rawTitle.replace('🆓 ', '').trim();
+    }
+
+    const platform = isAnnouncement ? 'Announcement' : (data.platform || 'PC');
+    const description = rawBody || (isAnnouncement ? displayTitle : `Free on ${platform} · Limited time offer`);
+
+    const raw = await AsyncStorage.getItem('fgf_notification_logs_v2');
+    const logs: any[] = raw ? JSON.parse(raw) : [];
+
+    // Deduplicate
+    if (logs.some((l) => l.id === id)) {
+      return;
+    }
+
+    const newAlert = {
+      id,
+      title: displayTitle || 'New Freebie Alert',
+      description,
+      timestamp: Date.now(),
+      platform,
+      isLive: true,
+      isAnnouncement,
+      actionUrl: isAnnouncement ? undefined : url, // Announcements have no claim link
+      coverImage: data.image || undefined,
+    };
+
+    const updated = [newAlert, ...logs].slice(0, 50);
+    await AsyncStorage.setItem('fgf_notification_logs_v2', JSON.stringify(updated));
+
+    // Update unread count
+    const curUnread = await AsyncStorage.getItem('fgf_unread_alerts_count');
+    const nextCount = (parseInt(curUnread || '0', 10) || 0) + 1;
+    await AsyncStorage.setItem('fgf_unread_alerts_count', String(nextCount));
+  } catch (e) {
+    console.warn('[NotificationService] Error logging incoming notification to alerts:', e);
+  }
+}
+
+/**
  * Register the background fetch task (No-op after pre-release hardening)
  */
 export async function registerBackgroundFetch(): Promise<void> {
@@ -436,6 +504,7 @@ export async function seedInitialSeenPosts(): Promise<void> {
         claimedCount: 'Active',
         actionType: 'claim',
         actionUrl: post.url,
+        coverImage: post.coverImage || undefined,
       }));
       await AsyncStorage.setItem('fgf_notification_logs_v2', JSON.stringify(initialAlerts));
       console.log('Seeded initial alert logs successfully.');
@@ -529,6 +598,73 @@ function cleanTitleForMatching(t: string): string {
     .replace(/\b(steam|gog|epicgames|epic|itchio|itch|playstation|xbox|pc|dlc|key|giveaway|free|game|pack|bundle)\b/g, "")
     .replace(/[^a-z0-9]/gi, "")  // remove non-alphanumeric
     .trim();
+}
+
+export function isPlatformSelectedForNotification(
+  dealPlatform: string,
+  selectedPlatforms: string[]
+): boolean {
+  if (!selectedPlatforms || selectedPlatforms.length === 0) {
+    return false;
+  }
+
+  const platLower = (dealPlatform || '').toLowerCase().trim();
+  const selectedLower = selectedPlatforms.map((p) => p.toLowerCase());
+
+  const matchedStores: string[] = [];
+  if (platLower.includes('steam')) matchedStores.push('steam');
+  if (platLower.includes('epic')) matchedStores.push('epic games');
+  if (platLower.includes('gog')) matchedStores.push('gog');
+  if (platLower.includes('itch')) matchedStores.push('itch.io');
+  if (platLower.includes('ubisoft') || platLower.includes('uplay')) matchedStores.push('ubisoft');
+  if (platLower.includes('stove')) matchedStores.push('stove');
+  if (platLower.includes('alienware')) matchedStores.push('alienware arena');
+  if (platLower.includes('prime') || platLower.includes('amazon')) matchedStores.push('prime gaming');
+  if (platLower.includes('playstation') || platLower.includes('ps4') || platLower.includes('ps5') || platLower.includes('psn')) matchedStores.push('playstation');
+  if (platLower.includes('xbox')) matchedStores.push('xbox');
+
+  if (matchedStores.length > 0) {
+    return matchedStores.some((store) => selectedLower.includes(store));
+  }
+
+  // If deal is from a platform outside the 10 supported stores
+  return selectedLower.includes('other');
+}
+
+export function isTypeSelectedForNotification(
+  rawType: string,
+  rawTitle: string,
+  selectedTypes: string[]
+): boolean {
+  if (!selectedTypes || selectedTypes.length === 0) {
+    return false;
+  }
+
+  const selectedLower = selectedTypes.map((t) => t.toLowerCase());
+  const typeLower = (rawType || '').toLowerCase().trim();
+  const titleLower = (rawTitle || '').toLowerCase().trim();
+
+  let category = 'game';
+
+  if (
+    typeLower.includes('dlc') ||
+    /\((?:dlc|expansion|add-on|addon)\)/i.test(titleLower) ||
+    /\b(dlc|expansion|add-on|addon|season pass)\b/i.test(titleLower)
+  ) {
+    category = 'dlc';
+  } else if (
+    typeLower.includes('beta') ||
+    typeLower.includes('alpha') ||
+    typeLower.includes('playtest') ||
+    /\((?:beta|alpha|playtest)\)/i.test(titleLower) ||
+    /\b(closed beta|open beta|playtest|alpha test)\b/i.test(titleLower)
+  ) {
+    category = 'beta';
+  } else {
+    category = 'game';
+  }
+
+  return selectedLower.includes(category);
 }
 
 /**
@@ -670,25 +806,10 @@ async function handleRemoteMessage(remoteMessage: any): Promise<void> {
       }
 
       // Filter check 2: Platform filtering
-      let platformMatches = false;
-      const postPlatLower = (mockPost.platform || '').toLowerCase();
-      const MAIN_PLATFORMS = ['Steam', 'Epic Games', 'GOG', 'itch.io', 'Playstation', 'Xbox'];
-      
-      let matchedAnyMain = false;
-      for (const mainPlat of MAIN_PLATFORMS) {
-        const mainPlatLower = mainPlat.toLowerCase();
-        if (postPlatLower.includes(mainPlatLower) || mainPlatLower.includes(postPlatLower)) {
-          matchedAnyMain = true;
-          if (settings.notificationPlatforms.includes(mainPlat)) {
-            platformMatches = true;
-          }
-        }
-      }
-      if (!matchedAnyMain) {
-        if (settings.notificationPlatforms.includes('Other')) {
-          platformMatches = true;
-        }
-      }
+      const platformMatches = isPlatformSelectedForNotification(
+        mockPost.platform || '',
+        settings.notificationPlatforms || []
+      );
 
       if (!platformMatches) {
         if (__DEV__) {
@@ -698,23 +819,15 @@ async function handleRemoteMessage(remoteMessage: any): Promise<void> {
       }
 
       // Filter check 3: Content Type filtering
-      let typeMatches = false;
-      const postTypeLower = (mockPost.type || 'game').toLowerCase();
-      let targetTypeKey = 'Game'; // default fallback
-      
-      if (postTypeLower.includes('dlc')) {
-        targetTypeKey = 'DLC';
-      } else if (postTypeLower.includes('beta') || postTypeLower.includes('alpha')) {
-        targetTypeKey = 'Beta';
-      }
-      
-      if (settings.notificationTypes.includes(targetTypeKey)) {
-        typeMatches = true;
-      }
+      const typeMatches = isTypeSelectedForNotification(
+        mockPost.type || '',
+        mockPost.title || mockPost.cleanTitle || '',
+        settings.notificationTypes || []
+      );
 
       if (!typeMatches) {
         if (__DEV__) {
-          console.log(`[NotificationService] Skipping notification for "${mockPost.cleanTitle}" because type category "${targetTypeKey}" (raw: "${mockPost.type}") is unchecked.`);
+          console.log(`[NotificationService] Skipping notification for "${mockPost.cleanTitle}" because type "${mockPost.type}" is unchecked.`);
         }
         return;
       }
@@ -748,33 +861,11 @@ export async function testReceiveFCM(platform: string, type: string, cleanTitle:
 
   const settings = await getAppSettings();
   
-  // Trace platform matching
-  const postPlatLower = platform.toLowerCase();
-  let matchedAnyMain = false;
-  let platformMatches = false;
-  const MAIN_PLATFORMS = ['Steam', 'Epic Games', 'GOG', 'itch.io', 'Playstation', 'Xbox'];
-  for (const mainPlat of MAIN_PLATFORMS) {
-    const mainPlatLower = mainPlat.toLowerCase();
-    if (postPlatLower.includes(mainPlatLower) || mainPlatLower.includes(postPlatLower)) {
-      matchedAnyMain = true;
-      if (settings.notificationPlatforms.includes(mainPlat)) {
-        platformMatches = true;
-      }
-    }
-  }
-  if (!matchedAnyMain && settings.notificationPlatforms.includes('Other')) {
-    platformMatches = true;
-  }
+  // Platform matching
+  const platformMatches = isPlatformSelectedForNotification(platform, settings.notificationPlatforms || []);
 
-  // Trace type matching
-  const postTypeLower = type.toLowerCase();
-  let targetTypeKey = 'Game';
-  if (postTypeLower.includes('dlc')) {
-    targetTypeKey = 'DLC';
-  } else if (postTypeLower.includes('beta') || postTypeLower.includes('alpha')) {
-    targetTypeKey = 'Beta';
-  }
-  const typeMatches = settings.notificationTypes.includes(targetTypeKey);
+  // Type matching
+  const typeMatches = isTypeSelectedForNotification(type, mockRedditTitle, settings.notificationTypes || []);
 
   // Trace duplicate checking
   let isDuplicate = false;
@@ -815,17 +906,23 @@ export async function testReceiveFCM(platform: string, type: string, cleanTitle:
 }
 
 // Register FCM background message handler at the module level ( Hermes / entry point early registration )
-if (messaging) {
-  messaging().setBackgroundMessageHandler(async (remoteMessage: any) => {
-    console.log('[NotificationService] Background FCM message received:', remoteMessage);
-    await handleRemoteMessage(remoteMessage);
-  });
+if (messaging && Platform.OS !== 'web') {
+  try {
+    messaging().setBackgroundMessageHandler(async (remoteMessage: any) => {
+      console.log('[NotificationService] Background FCM message received:', remoteMessage);
+      await handleRemoteMessage(remoteMessage);
+    });
 
-  // Handle foreground messages
-  messaging().onMessage(async (remoteMessage: any) => {
-    console.log('[NotificationService] Foreground FCM message received:', remoteMessage);
-    await handleRemoteMessage(remoteMessage);
-  });
+    // Handle foreground messages
+    messaging().onMessage(async (remoteMessage: any) => {
+      console.log('[NotificationService] Foreground FCM message received:', remoteMessage);
+      await handleRemoteMessage(remoteMessage);
+    });
+  } catch (e) {
+    if (__DEV__) {
+      console.warn('[NotificationService] Failed to set FCM message handlers:', e);
+    }
+  }
 }
 
 

@@ -1,17 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, SafeAreaView, Platform, Modal, Pressable, Linking } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { StyleSheet, Text, View, SafeAreaView, Platform, Modal, Pressable, Linking, Animated, Easing, FlatList, BackHandler } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
-import * as Notifications from 'expo-notifications';
+import { Notifications, analytics } from './src/utils/expoGoCompat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { COLORS, FONTS } from './src/theme/theme';
+import { COLORS, FONTS, RADIUS, SHADOWS } from './src/theme/theme';
+import HomeScreen from './src/screens/HomeScreen';
 import FeedScreen from './src/screens/FeedScreen';
 import VaultScreen from './src/screens/VaultScreen';
 import AlertsScreen from './src/screens/AlertsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import DetailScreen from './src/screens/DetailScreen';
-import { getClaimedPosts } from './src/services/storageService';
-import { postToBasicDeal } from './src/services/DealClassifier';
+import OnboardingScreen, { getSavedName } from './src/screens/OnboardingScreen';
+import { dealsStore } from './src/services/dealsStore';
 import { Deal } from './src/models/Deal';
 import BouncyPressable from './src/components/BouncyPressable';
 import {
@@ -19,62 +20,89 @@ import {
   registerBackgroundFetch,
   seedInitialSeenPosts,
   registerFCMToken,
+  addAlertLogFromNotification,
 } from './src/services/notificationService';
 import { expiredFeedService } from './src/services/ExpiredFeedService';
-import { Home, Inbox, Bell, User, Settings, Gamepad2, WifiOff, Sparkles, AlertTriangle } from 'lucide-react-native';
-import HourglassLoader from './src/components/HourglassLoader';
+import { sendDailyPing } from './src/services/usageAnalytics';
+import { Ionicons } from '@expo/vector-icons';
+import { WifiOff } from 'lucide-react-native';
+import { HomeSkeleton } from './src/components/LootSkeleton';
+import WebLandingWrapper from './src/components/WebLandingWrapper';
+import { useSafeAreaInsets } from './src/utils/useSafeAreaInsets';
 import * as Updates from 'expo-updates';
-import analytics from '@react-native-firebase/analytics';
+// analytics imported via expoGoCompat (guarded for Expo Go compatibility)
 import appJson from './app.json';
 
-// Helper to compare two semantic version strings
-function isVersionOlder(current: string, required: string): boolean {
-  const currentParts = current.split('.').map(Number);
-  const requiredParts = required.split('.').map(Number);
-
-  for (let i = 0; i < Math.max(currentParts.length, requiredParts.length); i++) {
-    const currentVal = currentParts[i] || 0;
-    const requiredVal = requiredParts[i] || 0;
-    if (currentVal < requiredVal) return true;
-    if (currentVal > requiredVal) return false;
+const checkForUpdatesSilently = async () => {
+  if (__DEV__ || Platform.OS === 'web') return;
+  try {
+    const update = await Updates.checkForUpdateAsync();
+    if (update.isAvailable) {
+      await Updates.fetchUpdateAsync();
+      await Updates.reloadAsync();
+    }
+  } catch (error) {
+    console.log('[Updates] Silent update check skipped or failed:', error);
   }
-  return false;
-}
+};
 
 export default function App() {
   const [fontsLoaded] = useFonts({
-    PlusJakartaSans_400Regular: require('@expo-google-fonts/plus-jakarta-sans/400Regular/PlusJakartaSans_400Regular.ttf'),
-    PlusJakartaSans_500Medium: require('@expo-google-fonts/plus-jakarta-sans/500Medium/PlusJakartaSans_500Medium.ttf'),
-    PlusJakartaSans_600SemiBold: require('@expo-google-fonts/plus-jakarta-sans/600SemiBold/PlusJakartaSans_600SemiBold.ttf'),
-    PlusJakartaSans_700Bold: require('@expo-google-fonts/plus-jakarta-sans/700Bold/PlusJakartaSans_700Bold.ttf'),
-    PlusJakartaSans_800ExtraBold: require('@expo-google-fonts/plus-jakarta-sans/800ExtraBold/PlusJakartaSans_800ExtraBold.ttf'),
-    SpaceMono_400Regular: require('@expo-google-fonts/space-mono/400Regular/SpaceMono_400Regular.ttf'),
-    SpaceMono_700Bold: require('@expo-google-fonts/space-mono/700Bold/SpaceMono_700Bold.ttf'),
+    Inter_400Regular: require('@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf'),
+    Inter_500Medium: require('@expo-google-fonts/inter/500Medium/Inter_500Medium.ttf'),
+    Inter_600SemiBold: require('@expo-google-fonts/inter/600SemiBold/Inter_600SemiBold.ttf'),
+    Inter_700Bold: require('@expo-google-fonts/inter/700Bold/Inter_700Bold.ttf'),
+    Inter_800ExtraBold: require('@expo-google-fonts/inter/800ExtraBold/Inter_800ExtraBold.ttf'),
+    JetBrainsMono_400Regular: require('@expo-google-fonts/jetbrains-mono/400Regular/JetBrainsMono_400Regular.ttf'),
+    JetBrainsMono_700Bold: require('@expo-google-fonts/jetbrains-mono/700Bold/JetBrainsMono_700Bold.ttf'),
+    InstrumentSerif_400Regular: require('@expo-google-fonts/instrument-serif/400Regular/InstrumentSerif_400Regular.ttf'),
+    InstrumentSerif_400Regular_Italic: require('@expo-google-fonts/instrument-serif/400Regular_Italic/InstrumentSerif_400Regular_Italic.ttf'),
   });
 
-  const { currentlyRunning, isUpdateAvailable, isUpdatePending } = Updates.useUpdates();
-
-  const handleReloadApp = async () => {
-    try {
-      await Updates.reloadAsync();
-    } catch (e) {
-      console.error('Failed to reload update:', e);
-    }
-  };
-
-  const [activeTab, setActiveTab] = useState<'feed' | 'vault' | 'alerts' | 'settings'>('feed');
+  const [activeTab, setActiveTab] = useState<'home' | 'feed' | 'vault' | 'alerts' | 'settings'>('home');
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
   const [claimedDeals, setClaimedDeals] = useState<Deal[]>([]);
   const [unreadAlertsCount, setUnreadAlertsCount] = useState<number>(0);
   const [isOffline, setIsOffline] = useState<boolean>(false);
   const [retrying, setRetrying] = useState<boolean>(false);
+  const [userName, setUserName] = useState<string>('Hunter');
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
+  const [onboardingReady, setOnboardingReady] = useState<boolean>(false);
+  const [feedInitialCategory, setFeedInitialCategory] = useState<string | undefined>(undefined);
+  const insets = useSafeAreaInsets();
+  
+  // Scroll-to-top ref for HomeScreen
+  const homeScrollRef = useRef<any>(null);
+  
+  // Animated tab values
+  const tabAnimations = useRef({
+    home: new Animated.Value(1),
+    feed: new Animated.Value(1),
+    vault: new Animated.Value(1),
+    alerts: new Animated.Value(1),
+    settings: new Animated.Value(1),
+  }).current;
 
-  // Force Update state
-  const [showForceUpdateModal, setShowForceUpdateModal] = useState<boolean>(false);
-  const [minRequiredVersion, setMinRequiredVersion] = useState<string>('1.2.0');
-  const [downloadUrl, setDownloadUrl] = useState<string>('https://github.com/EklavyaAhuja/LootQuest/releases/latest');
+  // Check for saved name on mount
+  useEffect(() => {
+    getSavedName().then((name) => {
+      if (name) {
+        setUserName(name);
+      }
+      setOnboardingReady(true);
+    });
+  }, []);
+
+  const handleOnboardingComplete = (name: string) => {
+    setUserName(name || 'Hunter');
+    setShowOnboarding(false);
+  };
 
   const checkConnection = async () => {
+    if (Platform.OS === 'web') {
+      setIsOffline(typeof navigator !== 'undefined' ? !navigator.onLine : false);
+      return;
+    }
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000);
@@ -95,86 +123,39 @@ export default function App() {
     setRetrying(false);
   };
 
-  const checkForceUpdate = async () => {
-    console.log('[ForceUpdate] Running version check against remote JSON...');
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      
-      const response = await fetch(
-        `https://raw.githubusercontent.com/EklavyaAhuja/LootQuest/main/version.json?t=${Date.now()}`,
-        {
-          signal: controller.signal,
-          headers: { 'Cache-Control': 'no-cache' }
-        }
-      );
-      
-      clearTimeout(timeoutId);
-      
-      if (response.ok) {
-        const data = await response.json();
-        const currentVersion = appJson.expo.version;
-        const minRequired = data.minRequiredVersion;
-        
-        if (minRequired && isVersionOlder(currentVersion, minRequired)) {
-          console.log(`[ForceUpdate] Current version ${currentVersion} is older than min required ${minRequired}. Blocking app.`);
-          if (data.downloadUrl) {
-            setDownloadUrl(data.downloadUrl);
-          }
-          setMinRequiredVersion(minRequired);
-          setShowForceUpdateModal(true);
-        } else {
-          console.log(`[ForceUpdate] Version check passed: current ${currentVersion}, required ${minRequired}`);
-        }
-      } else {
-        console.warn(`[ForceUpdate] Failed to fetch version.json. Status: ${response.status}. Failing open.`);
-      }
-    } catch (error) {
-      console.warn('[ForceUpdate] Error fetching remote version config (failing open):', error);
-    }
-  };
-
-  const handleDownloadUpdate = async () => {
-    try {
-      await Linking.openURL(downloadUrl);
-    } catch (e) {
-      console.error('Failed to open download URL:', e);
-    }
-  };
-
-  const loadClaimedPosts = async () => {
-    try {
-      const claimed = await getClaimedPosts();
-      setClaimedDeals(claimed.map(postToBasicDeal));
-    } catch (e) {
-      console.error('Error loading claimed posts:', e);
-    }
-  };
-
   useEffect(() => {
-    loadClaimedPosts();
-  }, [activeTab, selectedDeal]);
+    dealsStore.init().then(() => {
+      setClaimedDeals(dealsStore.getVaultItems('All'));
+    });
+    const unsub = dealsStore.subscribe(() => {
+      setClaimedDeals(dealsStore.getVaultItems('All'));
+    });
+    return () => unsub();
+  }, []);
 
   // Initialize App Configuration (Permissions, Background Task)
   useEffect(() => {
     const initApp = async () => {
-      // Check network connection first
-      await checkConnection();
+      // Run network connectivity check and silent update check concurrently
+      checkConnection();
+      checkForUpdatesSilently();
 
-      // Check for force update (fails open if offline/timeout)
-      await checkForceUpdate();
+      // Anonymous usage ping (fire-and-forget, never blocks startup)
+      sendDailyPing();
 
-      // Log App Open event in Firebase Analytics
-      try {
-        await analytics().logAppOpen();
-        console.log('[Analytics] App open logged successfully');
-      } catch (analyticsError) {
+      // Log App Open event in Firebase Analytics asynchronously
+      analytics().logAppOpen().catch((analyticsError: any) => {
         console.warn('[Analytics] Error logging app open:', analyticsError);
-      }
+      });
 
-      // Initialize expired posts service first
-      await expiredFeedService.initialize();
-      
+      // Initialize background services and load unread count concurrently
+      await Promise.allSettled([
+        expiredFeedService.getExpiredPostIds(),
+        AsyncStorage.getItem('fgf_unread_alerts_count').then((rawCount) => {
+          if (rawCount) setUnreadAlertsCount(Number(rawCount));
+        }),
+      ]);
+
       const granted = await requestNotificationPermissions();
       if (granted) {
         console.log('Notifications permissions granted.');
@@ -182,25 +163,28 @@ export default function App() {
         await registerBackgroundFetch();
         await registerFCMToken();
       }
-
-      // Load initial unread count
-      try {
-        const rawCount = await AsyncStorage.getItem('fgf_unread_alerts_count');
-        if (rawCount) {
-          setUnreadAlertsCount(Number(rawCount));
-        }
-      } catch (e) {
-        console.error('Error loading unread count:', e);
-      }
     };
     initApp();
 
-    // Handle notification clicks (Deep link to detail view)
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data as any;
+    // 1. Log incoming notification when received in foreground
+    const receivedSubscription = Notifications.addNotificationReceivedListener((notification: any) => {
+      if (notification?.request?.content) {
+        addAlertLogFromNotification(notification.request.content);
+        setUnreadAlertsCount((prev) => prev + 1);
+      }
+    });
+
+    // 2. Handle notification clicks (Deep link to detail view + log to Alerts)
+    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response: any) => {
+      const content = response?.notification?.request?.content;
+      if (content) {
+        addAlertLogFromNotification(content);
+      }
+
+      const data = content?.data as any;
       if (data && data.postId) {
-        const title = response.notification.request.content.title || '';
-        const body = response.notification.request.content.body || '';
+        const title = content?.title || '';
+        const body = content?.body || '';
         
         let platform = data.platform || 'Steam';
         if (!data.platform) {
@@ -241,14 +225,40 @@ export default function App() {
         };
 
         setSelectedDeal(notificationDeal);
-        handleTabChange('feed');
+        handleTabChange('home');
       }
     });
 
-    return () => subscription.remove();
+    return () => {
+      receivedSubscription.remove();
+      responseSubscription.remove();
+    };
   }, []);
 
-  const handleTabChange = async (tab: 'feed' | 'vault' | 'alerts' | 'settings') => {
+  // Handle hardware back press on Android to close deal detail overlay
+  useEffect(() => {
+    if (!selectedDeal) return;
+    const backAction = () => {
+      setSelectedDeal(null);
+      return true;
+    };
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => backHandler.remove();
+  }, [selectedDeal]);
+
+  const handleTabChange = async (tab: 'home' | 'feed' | 'vault' | 'alerts' | 'settings') => {
+    // Animate tab icon
+    const animValue = tabAnimations[tab];
+    Animated.sequence([
+      Animated.spring(animValue, { toValue: 1.25, friction: 5, tension: 40, useNativeDriver: true }),
+      Animated.spring(animValue, { toValue: 1, friction: 5, tension: 40, useNativeDriver: true }),
+    ]).start();
+
+    // Scroll to top if tapping the already-active tab
+    if (tab === activeTab && tab === 'home') {
+      homeScrollRef.current?.scrollToOffset({ offset: 0, animated: true });
+    }
+
     setActiveTab(tab);
     if (tab === 'alerts') {
       setUnreadAlertsCount(0);
@@ -260,213 +270,182 @@ export default function App() {
     }
   };
 
-  if (!fontsLoaded) {
+  if (!fontsLoaded || !onboardingReady) {
     return (
       <View style={styles.loadingContainer}>
-        <HourglassLoader />
+        <HomeSkeleton />
       </View>
     );
   }
 
+  // Show onboarding flow only if requested
+  if (showOnboarding) {
+    return (
+      <WebLandingWrapper>
+        <SafeAreaView style={styles.safeArea}>
+          <StatusBar style="light" />
+          <OnboardingScreen onComplete={handleOnboardingComplete} />
+        </SafeAreaView>
+      </WebLandingWrapper>
+    );
+  }
+
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="light" backgroundColor={COLORS.bg} />
-      
-      {/* Top App Bar Header matching Stitch */}
-      <View style={styles.header}>
-        <Pressable onPress={() => handleTabChange('feed')}>
-          <Gamepad2 size={26} color={COLORS.primary} />
-        </Pressable>
-        
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerText}>LOOTQUEST</Text>
+    <WebLandingWrapper>
+      <SafeAreaView style={styles.safeArea}>
+        {/* Main Content — visibility toggling, never unmount */}
+        <View style={styles.content}>
+          <View style={[styles.screenContainer, { display: activeTab === 'home' ? 'flex' : 'none' }]}>
+            <HomeScreen
+              onDealSelect={setSelectedDeal}
+              claimedDeals={claimedDeals}
+              userName={userName || 'Hunter'}
+              scrollRef={homeScrollRef}
+              onNavigateToFeed={(params) => {
+                if (params?.filterUnclaimed) {
+                  setFeedInitialCategory('unclaimed');
+                }
+                handleTabChange('feed');
+              }}
+              isDetailOpen={!!selectedDeal}
+            />
+          </View>
+          <View style={[styles.screenContainer, { display: activeTab === 'feed' ? 'flex' : 'none' }]}>
+            <FeedScreen
+              onDealSelect={setSelectedDeal}
+              claimedDeals={claimedDeals}
+              initialCategory={feedInitialCategory}
+            />
+          </View>
+          <View style={[styles.screenContainer, { display: activeTab === 'vault' ? 'flex' : 'none' }]}>
+            <VaultScreen 
+              onDealSelect={setSelectedDeal}
+              isActive={activeTab === 'vault'}
+              claimedDeals={claimedDeals}
+              onRemoveClaimed={(dealId) => {
+                dealsStore.unclaimDeal(dealId);
+              }}
+            />
+          </View>
+          <View style={[styles.screenContainer, { display: activeTab === 'alerts' ? 'flex' : 'none' }]}>
+            <AlertsScreen />
+          </View>
+          <View style={[styles.screenContainer, { display: activeTab === 'settings' ? 'flex' : 'none' }]}>
+            <SettingsScreen
+              userName={userName}
+              onUpdateUserName={(name) => setUserName(name)}
+            />
+          </View>
         </View>
 
-        <Pressable onPress={() => handleTabChange('settings')}>
-          <Settings size={26} color={COLORS.text} />
-        </Pressable>
-      </View>
+        {/* Full-width Opaque #000 Hallmark Tab Bar with 1px hairline */}
+        {!selectedDeal && (
+          <View style={styles.tabBarContainer}>
+            <View style={[styles.tabBar, { paddingBottom: insets.bottom, height: 56 + insets.bottom }]}>
+              {/* Home */}
+              <Pressable onPress={() => handleTabChange('home')} style={styles.tabBtn}>
+                <Animated.View style={styles.tabIconWrapper}>
+                  <Animated.View style={{ transform: [{ scale: tabAnimations.home }] }}>
+                    <Ionicons name="home-outline" size={18} color={activeTab === 'home' ? '#EDEDEB' : '#86868B'} />
+                  </Animated.View>
+                  <Text style={[styles.tabLabel, { color: activeTab === 'home' ? '#EDEDEB' : '#86868B' }]}>Home</Text>
+                  {activeTab === 'home' && <View style={styles.activeTabDot} />}
+                </Animated.View>
+              </Pressable>
 
-      {/* Update Banner */}
-      {isUpdatePending && (
-        <View style={styles.updateBanner}>
-          <View style={styles.updateBannerLeft}>
-            <Sparkles size={20} color={COLORS.primary} />
-            <Text style={styles.updateBannerText}>New update is ready!</Text>
-          </View>
-          <BouncyPressable
-            onPress={handleReloadApp}
-            backgroundColor={COLORS.primary}
-            borderRadius={8}
-            shadowOffsetSize={0}
-            style={styles.updateBtn}
-            contentStyle={styles.updateBtnContent}
-          >
-            <Text style={styles.updateBtnText}>RESTART</Text>
-          </BouncyPressable>
-        </View>
-      )}
+              {/* Feed */}
+              <Pressable onPress={() => handleTabChange('feed')} style={styles.tabBtn}>
+                <Animated.View style={styles.tabIconWrapper}>
+                  <Animated.View style={{ transform: [{ scale: tabAnimations.feed }] }}>
+                    <Ionicons name="flash-outline" size={18} color={activeTab === 'feed' ? '#EDEDEB' : '#86868B'} />
+                  </Animated.View>
+                  <Text style={[styles.tabLabel, { color: activeTab === 'feed' ? '#EDEDEB' : '#86868B' }]}>Feed</Text>
+                  {activeTab === 'feed' && <View style={styles.activeTabDot} />}
+                </Animated.View>
+              </Pressable>
 
-      {/* Main Content Screens Switcher */}
-      <View style={styles.content}>
-        {activeTab === 'feed' && (
-          <FeedScreen 
-            onDealSelect={setSelectedDeal} 
-            claimedDeals={claimedDeals} 
-            onNewAlerts={(count) => {
-              setUnreadAlertsCount((prev) => prev + count);
-            }}
-            onConnectionError={() => setIsOffline(true)}
-          />
-        )}
-        {activeTab === 'vault' && <VaultScreen onDealSelect={setSelectedDeal} />}
-        {activeTab === 'alerts' && <AlertsScreen />}
-        {activeTab === 'settings' && <SettingsScreen />}
-      </View>
+              {/* Vault */}
+              <Pressable onPress={() => handleTabChange('vault')} style={styles.tabBtn}>
+                <Animated.View style={styles.tabIconWrapper}>
+                  <Animated.View style={{ transform: [{ scale: tabAnimations.vault }] }}>
+                    <Ionicons name="cube-outline" size={18} color={activeTab === 'vault' ? '#EDEDEB' : '#86868B'} />
+                  </Animated.View>
+                  <Text style={[styles.tabLabel, { color: activeTab === 'vault' ? '#EDEDEB' : '#86868B' }]}>Vault</Text>
+                  {activeTab === 'vault' && <View style={styles.activeTabDot} />}
+                </Animated.View>
+              </Pressable>
 
-      {/* Bottom Tab Bar Navigation matching Stitch */}
-      <View style={styles.tabBar}>
-        {/* Home Feed */}
-        <Pressable
-          onPress={() => handleTabChange('feed')}
-          style={styles.tabBtn}
-        >
-          <View style={activeTab === 'feed' ? styles.tabIconWrapperActive : styles.tabIconWrapper}>
-            <Home size={22} color={activeTab === 'feed' ? COLORS.primary : COLORS.textMuted} />
-            <Text style={[styles.tabLabel, { color: activeTab === 'feed' ? COLORS.primary : COLORS.textMuted }]}>Home</Text>
-          </View>
-        </Pressable>
+              {/* Alerts */}
+              <Pressable onPress={() => handleTabChange('alerts')} style={styles.tabBtn}>
+                <View style={styles.alertTabContainer}>
+                  <Animated.View style={styles.tabIconWrapper}>
+                    <Animated.View style={{ transform: [{ scale: tabAnimations.alerts }] }}>
+                      <Ionicons name="radio-outline" size={18} color={activeTab === 'alerts' ? '#EDEDEB' : '#86868B'} />
+                    </Animated.View>
+                    <Text style={[styles.tabLabel, { color: activeTab === 'alerts' ? '#EDEDEB' : '#86868B' }]}>Alerts</Text>
+                    {activeTab === 'alerts' && <View style={styles.activeTabDot} />}
+                  </Animated.View>
+                  {unreadAlertsCount > 0 && (
+                    <View style={styles.alertBadge}><Text style={styles.alertBadgeText}>{unreadAlertsCount}</Text></View>
+                  )}
+                </View>
+              </Pressable>
 
-        {/* Vault */}
-        <Pressable
-          onPress={() => handleTabChange('vault')}
-          style={styles.tabBtn}
-        >
-          <View style={activeTab === 'vault' ? styles.tabIconWrapperActive : styles.tabIconWrapper}>
-            <Inbox size={22} color={activeTab === 'vault' ? COLORS.primary : COLORS.textMuted} />
-            <Text style={[styles.tabLabel, { color: activeTab === 'vault' ? COLORS.primary : COLORS.textMuted }]}>Vault</Text>
-          </View>
-        </Pressable>
-
-        {/* Alerts */}
-        <Pressable
-          onPress={() => handleTabChange('alerts')}
-          style={styles.tabBtn}
-        >
-          <View style={styles.alertTabContainer}>
-            <View style={activeTab === 'alerts' ? styles.tabIconWrapperActive : styles.tabIconWrapper}>
-              <Bell size={22} color={activeTab === 'alerts' ? COLORS.primary : COLORS.textMuted} />
-              <Text style={[styles.tabLabel, { color: activeTab === 'alerts' ? COLORS.primary : COLORS.textMuted }]}>Alerts</Text>
+              {/* Settings */}
+              <Pressable onPress={() => handleTabChange('settings')} style={styles.tabBtn}>
+                <Animated.View style={styles.tabIconWrapper}>
+                  <Animated.View style={{ transform: [{ scale: tabAnimations.settings }] }}>
+                    <Ionicons name="options-outline" size={18} color={activeTab === 'settings' ? '#EDEDEB' : '#86868B'} />
+                  </Animated.View>
+                  <Text style={[styles.tabLabel, { color: activeTab === 'settings' ? '#EDEDEB' : '#86868B' }]}>Settings</Text>
+                  {activeTab === 'settings' && <View style={styles.activeTabDot} />}
+                </Animated.View>
+              </Pressable>
             </View>
-            {/* Badge */}
-            {unreadAlertsCount > 0 && (
-              <View style={styles.alertBadge}>
-                <Text style={styles.alertBadgeText}>{unreadAlertsCount}</Text>
-              </View>
-            )}
           </View>
-        </Pressable>
+        )}
 
-        {/* Me / Profile */}
-        <Pressable
-          onPress={() => handleTabChange('settings')}
-          style={styles.tabBtn}
-        >
-          <View style={activeTab === 'settings' ? styles.tabIconWrapperActive : styles.tabIconWrapper}>
-            <User size={22} color={activeTab === 'settings' ? COLORS.primary : COLORS.textMuted} />
-            <Text style={[styles.tabLabel, { color: activeTab === 'settings' ? COLORS.primary : COLORS.textMuted }]}>Settings</Text>
-          </View>
-        </Pressable>
-      </View>
-
-      {/* Detail Modal */}
-      <Modal
-        visible={selectedDeal !== null}
-        animationType="slide"
-        onRequestClose={() => setSelectedDeal(null)}
-        statusBarTranslucent={true}
-      >
+        {/* Detail Screen Overlay (Confined strictly inside the mobile phone UI) */}
         {selectedDeal && (
-          <View style={styles.modalSafeArea}>
-            <DetailScreen deal={selectedDeal} onClose={() => setSelectedDeal(null)} />
+          <View style={[StyleSheet.absoluteFill, styles.detailScreenOverlay]}>
+            <DetailScreen 
+              deal={selectedDeal} 
+              onClose={() => setSelectedDeal(null)} 
+              onClaimed={(claimedDeal) => {
+                dealsStore.claimDeal(claimedDeal);
+              }}
+            />
           </View>
         )}
-      </Modal>
 
-      {/* Offline Overlay UI */}
-      {isOffline && (
-        <View style={styles.offlineOverlay}>
-          <View style={styles.offlineCard}>
-            <View style={styles.wifiOffIconWrapper}>
-              <WifiOff size={40} color="#ef4444" />
-            </View>
-            <Text style={styles.offlineTitle}>CONNECTION LOST</Text>
-            <Text style={styles.offlineDescription}>
-              Internet is required to run LootQuest. Please check your network connection and try again.
-            </Text>
-            <BouncyPressable
-              onPress={handleRetryConnection}
-              backgroundColor="#39ff14"
-              borderRadius={12}
-              shadowOffsetSize={0}
-              style={styles.retryBtn}
-              contentStyle={styles.retryBtnContent}
-              disabled={retrying}
-            >
-              <Text style={styles.retryBtnText}>
-                {retrying ? 'CHECKING...' : 'RETRY CONNECTION'}
+        {/* Offline Overlay UI */}
+        {isOffline && (
+          <View style={styles.offlineOverlay}>
+            <View style={styles.offlineCard}>
+              <View style={styles.wifiOffIconWrapper}>
+                <WifiOff size={40} color="#ef4444" />
+              </View>
+              <Text style={styles.offlineTitle}>CONNECTION LOST</Text>
+              <Text style={styles.offlineDescription}>
+                Internet is required to run LootQuest. Please check your network connection and try again.
               </Text>
-            </BouncyPressable>
-          </View>
-        </View>
-      )}
-
-      {/* Force Update Overlay UI */}
-      {showForceUpdateModal && (
-        <View style={styles.forceUpdateOverlay}>
-          <View style={styles.forceUpdateCard}>
-            <View style={styles.warningIconWrapper}>
-              <AlertTriangle size={40} color={COLORS.warning} />
-            </View>
-            <Text style={styles.forceUpdateTitle}>UPDATE REQUIRED</Text>
-            <Text style={styles.forceUpdateDescription}>
-              {isUpdatePending 
-                ? 'An over-the-air update is ready to install. Please restart the app to apply it.'
-                : `A mandatory update (v${minRequiredVersion} or newer) is required to continue using LootQuest. Please download and install the latest version.`
-              }
-            </Text>
-            
-            {isUpdatePending && (
               <BouncyPressable
-                onPress={handleReloadApp}
-                backgroundColor={COLORS.success}
-                borderRadius={12}
-                shadowOffsetSize={0}
-                style={[styles.downloadBtn, { marginBottom: 12 }]}
-                contentStyle={styles.downloadBtnContent}
+                onPress={handleRetryConnection}
+                backgroundColor={COLORS.primary}
+                borderRadius={4}
+                style={styles.retryBtn}
+                contentStyle={styles.retryBtnContent}
+                disabled={retrying}
               >
-                <Text style={[styles.downloadBtnText, { color: '#0b101e' }]}>
-                  RESTART & APPLY
+                <Text style={styles.retryBtnText}>
+                  {retrying ? 'CHECKING...' : 'RETRY CONNECTION'}
                 </Text>
               </BouncyPressable>
-            )}
-
-            <BouncyPressable
-              onPress={handleDownloadUpdate}
-              backgroundColor={COLORS.primary}
-              borderRadius={12}
-              shadowOffsetSize={0}
-              style={styles.downloadBtn}
-              contentStyle={styles.downloadBtnContent}
-            >
-              <Text style={styles.downloadBtnText}>
-                UPDATE NOW
-              </Text>
-            </BouncyPressable>
+            </View>
           </View>
-        </View>
-      )}
-    </SafeAreaView>
+        )}
+      </SafeAreaView>
+    </WebLandingWrapper>
   );
 }
 
@@ -488,164 +467,202 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
   },
   header: {
-    backgroundColor: COLORS.bg,
-    borderBottomWidth: 1,
-    borderColor: COLORS.border,
+    backgroundColor: 'transparent',
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingTop: Platform.OS === 'ios' ? 8 : 6,
+    paddingBottom: 4,
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    height: 64,
-    shadowColor: '#a855f7',
-    shadowOffset: { width: 0, height: 20 },
-    shadowOpacity: 0.15,
-    shadowRadius: 40,
-    elevation: 8,
-  },
-  headerIconBtn: {
-    width: 38,
-    height: 38,
-  },
-  headerIconBtnContent: {
-    width: 32,
-    height: 32,
     justifyContent: 'center',
     alignItems: 'center',
+    height: 44,
   },
-  headerTitleContainer: {
+  headerBrandBadge: {
+    flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
+    gap: 8,
+    backgroundColor: 'rgba(12, 12, 12, 0.92)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: '#1C1C1E',
+    ...SHADOWS.card,
+  },
+  brandGemIcon: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(237, 237, 235, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerText: {
     fontFamily: FONTS.extraBold,
-    fontSize: 28,
-    color: COLORS.primary,
-    letterSpacing: -1,
-    textAlign: 'center',
+    fontSize: 13,
+    color: '#EDEDEB',
+    letterSpacing: 2.2,
+  },
+  headerLiveIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(237, 237, 235, 0.10)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: RADIUS.pill,
+  },
+  headerLiveDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#EDEDEB',
+  },
+  headerLiveText: {
+    fontFamily: FONTS.mono,
+    fontSize: 8.5,
+    fontWeight: '800',
+    color: '#EDEDEB',
+    letterSpacing: 0.5,
   },
   content: {
     flex: 1,
   },
+  screenContainer: {
+    flex: 1,
+  },
+  tabBarContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    width: '100%',
+    zIndex: 1000,
+  },
   tabBar: {
     flexDirection: 'row',
-    backgroundColor: COLORS.surfaceLowest,
+    backgroundColor: '#000000',
     borderTopWidth: 1,
-    borderColor: COLORS.border,
-    paddingHorizontal: 16,
-    height: Platform.OS === 'android' ? 104 : 80,
-    paddingBottom: Platform.OS === 'android' ? 24 : 0,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    borderTopColor: '#1C1C1E',
+    borderBottomWidth: 0,
+    borderLeftWidth: 0,
+    borderRightWidth: 0,
+    paddingHorizontal: 12,
+    paddingTop: 8,
     alignItems: 'center',
     justifyContent: 'space-around',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -10 },
-    shadowOpacity: 0.5,
-    shadowRadius: 30,
-    elevation: 8,
   },
   tabBtn: {
-    height: 64,
+    height: 48,
     justifyContent: 'center',
     alignItems: 'center',
     flex: 1,
+    marginHorizontal: 2,
   },
   tabIconWrapper: {
+    width: '100%',
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 16,
+    paddingVertical: 2,
+    position: 'relative',
   },
-  tabIconWrapperActive: {
-    backgroundColor: 'rgba(183, 109, 255, 0.2)',
-    borderRadius: 24,
-    paddingVertical: 6,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
+  activeTabDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#EDEDEB',
+    marginTop: 2,
   },
   tabLabel: {
-    fontSize: 11,
-    fontFamily: FONTS.headlineMedium,
+    fontSize: 10,
+    fontFamily: FONTS.mono,
+    fontWeight: '500',
     marginTop: 2,
-    fontWeight: '600',
+    letterSpacing: 0.4,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   alertTabContainer: {
+    width: '100%',
+    height: '100%',
     position: 'relative',
   },
   alertBadge: {
     position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: COLORS.warning,
-    borderWidth: 2,
-    borderColor: COLORS.border,
-    borderRadius: 10,
-    width: 20,
-    height: 20,
+    top: 2,
+    right: 8,
+    backgroundColor: COLORS.danger,
+    borderRadius: RADIUS.pill,
+    minWidth: 16,
+    height: 16,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 100,
+    paddingHorizontal: 3,
   },
   alertBadgeText: {
-    fontFamily: FONTS.bold,
-    fontSize: 11,
-    color: COLORS.border,
+    fontFamily: FONTS.mono,
+    fontSize: 9,
+    color: '#fff',
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+  },
+  detailScreenOverlay: {
+    zIndex: 9999,
+    elevation: 9999,
+    backgroundColor: '#000000',
   },
   modalSafeArea: {
     flex: 1,
     backgroundColor: COLORS.bg,
   },
   offlineOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(11, 16, 30, 0.94)',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.88)',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
     zIndex: 9999,
   },
   offlineCard: {
-    backgroundColor: COLORS.white,
-    borderWidth: 2,
-    borderColor: '#334155',
-    borderRadius: 24,
-    padding: 24,
+    backgroundColor: COLORS.bgModal,
+    borderRadius: RADIUS.xl,
+    padding: 28,
     alignItems: 'center',
     width: '100%',
     maxWidth: 340,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...SHADOWS.elevated,
   },
   wifiOffIconWrapper: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-    borderWidth: 1.5,
-    borderColor: '#ef4444',
-    justifyContent: 'center',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: COLORS.warningLight,
     alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 16,
   },
   offlineTitle: {
-    fontFamily: FONTS.bold,
-    fontSize: 20,
+    fontFamily: FONTS.extraBold,
+    fontSize: 18,
     color: COLORS.text,
     textAlign: 'center',
-    letterSpacing: 0.5,
-    marginBottom: 10,
+    marginBottom: 8,
+    letterSpacing: 1,
   },
   offlineDescription: {
-    fontFamily: FONTS.medium,
-    fontSize: 14,
-    color: '#64748b',
+    fontFamily: FONTS.regular,
+    fontSize: 12,
+    color: COLORS.textMuted,
     textAlign: 'center',
-    lineHeight: 21,
-    marginBottom: 24,
+    lineHeight: 20,
+    marginBottom: 20,
   },
   retryBtn: {
     width: '100%',
@@ -655,115 +672,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     height: 48,
-    borderRadius: 12,
+    borderRadius: RADIUS.md,
   },
   retryBtnText: {
-    fontFamily: FONTS.bold,
-    fontSize: 15,
-    color: '#0b101e',
-    letterSpacing: 0.5,
-  },
-  updateBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: COLORS.surfaceLow,
-    borderBottomWidth: 2,
-    borderBottomColor: COLORS.primary,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  updateBannerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    marginRight: 12,
-  },
-  updateBannerText: {
-    fontFamily: FONTS.headlineMedium,
-    fontSize: 14,
-    color: COLORS.text,
-    marginLeft: 8,
-  },
-  updateBtn: {
-    height: 36,
-    paddingHorizontal: 16,
-  },
-  updateBtnContent: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    height: 36,
-    borderRadius: 8,
-  },
-  updateBtnText: {
     fontFamily: FONTS.mono,
     fontSize: 12,
-    color: '#0b101e',
-  },
-  forceUpdateOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(11, 16, 30, 0.94)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    zIndex: 99999,
-  },
-  forceUpdateCard: {
-    backgroundColor: COLORS.white,
-    borderWidth: 2,
-    borderColor: COLORS.primary,
-    borderRadius: 24,
-    padding: 24,
-    alignItems: 'center',
-    width: '100%',
-    maxWidth: 340,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-    elevation: 10,
-  },
-  warningIconWrapper: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: 'rgba(255, 36, 73, 0.1)',
-    borderWidth: 1.5,
-    borderColor: COLORS.warning,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  forceUpdateTitle: {
-    fontFamily: FONTS.bold,
-    fontSize: 20,
-    color: COLORS.text,
-    textAlign: 'center',
-    letterSpacing: 0.5,
-    marginBottom: 10,
-  },
-  forceUpdateDescription: {
-    fontFamily: FONTS.medium,
-    fontSize: 14,
-    color: COLORS.textMuted,
-    textAlign: 'center',
-    lineHeight: 21,
-    marginBottom: 24,
-  },
-  downloadBtn: {
-    width: '100%',
-    height: 48,
-  },
-  downloadBtnContent: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    height: 48,
-    borderRadius: 12,
-  },
-  downloadBtnText: {
-    fontFamily: FONTS.bold,
-    fontSize: 15,
-    color: '#0b101e',
-    letterSpacing: 0.5,
+    color: '#fff',
+    letterSpacing: 1,
   },
 });

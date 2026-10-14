@@ -1,0 +1,23 @@
+{
+  "short_name": "LootQuest",
+  "name": "LootQuest - Free Game Radar & Alerts",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "/Icon_Latest.png",
+      "type": "image/png",
+      "sizes": "192x192 512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0B0E14",
+  "theme_color": "#6C5CE7",
+  "display": "standalone",
+  "orientation": "portrait",
+  "description": "Never miss a free game giveaway on Steam, Epic Games, GOG, PlayStation, Xbox, and mobile!"
+}

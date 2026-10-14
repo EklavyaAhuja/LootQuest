@@ -1,7 +1,9 @@
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Deal } from '../models/Deal';
 import { classifyDeal } from './DealClassifier';
-import { isDealExpired, getTimeLeft, parseDateToMs, determineClaimMethod, getCleanPlatform, extractDirectStoreUrl } from '../utils/dealUtils';
+import { fetchWithProxy } from './redditService';
+import { isDealExpired, getTimeLeft, parseDateToMs, determineClaimMethod, getCleanPlatform, extractDirectStoreUrl, classifyGiveawayHost } from '../utils/dealUtils';
 
 const CACHE_PREFIX = 'fgf_gp_cache_v6_';
 const CACHE_TTL = 15 * 60 * 1000; // 15 minutes TTL
@@ -83,31 +85,76 @@ export async function fetchGamerPowerGiveaways(
   }
 
   console.log(`[GamerPowerService] Fetching from API: ${url}`);
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`GamerPower API request failed: status ${response.status}`);
+  let data: any = null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4500);
+
+  try {
+    let response: Response;
+    if (Platform.OS === 'web') {
+      response = await fetchWithProxy(url, 4500);
+    } else {
+      response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      });
+    }
+    clearTimeout(timer);
+    if (!response.ok) {
+      throw new Error(`GamerPower API request failed: status ${response.status}`);
+    }
+    data = await response.json();
+  } catch (err) {
+    clearTimeout(timer);
+    console.warn('[GamerPowerService] Direct API fetch failed or timed out:', err);
+    // Graceful fallback to existing cache even if expired
+    try {
+      const fallbackCached = await AsyncStorage.getItem(cacheKey);
+      if (fallbackCached) {
+        const { deals } = JSON.parse(fallbackCached);
+        if (Array.isArray(deals) && deals.length > 0) {
+          console.log(`[GamerPowerService] Serving ${deals.length} cached deals on fallback.`);
+          return deals.slice(0, limit);
+        }
+      }
+    } catch {}
   }
 
-  const data = await response.json();
-  if (!Array.isArray(data)) {
-    throw new Error('GamerPower API response is not an array');
+  if (!Array.isArray(data) || data.length === 0) {
+    // If empty or invalid, try cache before giving up
+    try {
+      const fallbackCached = await AsyncStorage.getItem(cacheKey);
+      if (fallbackCached) {
+        const { deals } = JSON.parse(fallbackCached);
+        if (Array.isArray(deals) && deals.length > 0) {
+          return deals.slice(0, limit);
+        }
+      }
+    } catch {}
+    return [];
   }
 
   // 3. Map items to Deal schema
   const deals: Deal[] = data.map((item: any) => {
     const id = 'gp_' + item.id;
     const rawUrl = item.open_giveaway_url || item.open_giveaway || item.gamerpower_url || '';
-    const giveawayUrl = extractDirectStoreUrl(item.instructions || '', item.description || '', rawUrl);
+    const realGiveawayUrl = rawUrl;
+    const extractedStore = extractDirectStoreUrl(item.instructions || '', item.description || '', '');
+    const realStoreUrl = extractedStore || (rawUrl.includes('store.steampowered') || rawUrl.includes('epicgames.com') || rawUrl.includes('gog.com') ? rawUrl : undefined);
+    const hostInfo = classifyGiveawayHost(realGiveawayUrl);
     
     // Normalize platforms
     const rawPlats = item.platforms
       ? item.platforms.split(',').map((p: string) => p.trim())
       : ['PC'];
 
-    const platformString = getCleanPlatform(rawPlats, item.title || '', item.instructions || '', giveawayUrl);
+    const platformString = getCleanPlatform(rawPlats, item.title || '', item.instructions || '', realGiveawayUrl);
 
     // Smart Type Classification
-    const classification = classifyDeal(item.title, item.description || '', platformString, giveawayUrl);
+    const classification = classifyDeal(item.title, item.description || '', platformString, realGiveawayUrl);
     let finalType: Deal['type'] = 'full_game';
 
     // Map GamerPower native type to our enum
@@ -122,7 +169,7 @@ export async function fetchGamerPowerGiveaways(
       finalType = classification.type || 'full_game';
     }
 
-    const claimMethod = determineClaimMethod(item.instructions || '', item.title || '', platformString, giveawayUrl);
+    const claimMethod = determineClaimMethod(item.instructions || '', item.title || '', platformString, realGiveawayUrl);
 
     // End Date parsing with fallback logic
     const expiresAt = parseGamerPowerDate(item.end_date) || undefined;
@@ -144,8 +191,12 @@ export async function fetchGamerPowerGiveaways(
       type: finalType,
       claimMethod,
       image: item.image || item.thumbnail || undefined,
-      url: giveawayUrl,
-      author: 'GamerPower',
+      url: realGiveawayUrl,
+      giveawayUrl: realGiveawayUrl,
+      storeUrl: realStoreUrl,
+      isEntryRequired: false,
+      entrySiteLabel: undefined,
+      author: undefined,
       description: `${description}\n\nInstructions:\n${instructions}`,
       aboutGame: description,
       instructions: instructions,

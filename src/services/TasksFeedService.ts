@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { redditFetch } from './redditFetch';
 
 const CACHE_KEY = 'fgf_tasks_post_ids';
@@ -60,9 +61,12 @@ class TasksFeedService {
     this.isFetching = true;
     try {
       console.log('[TasksFeedService] Fetching tasks flair feed...');
-      const rssUrl = 'https://old.reddit.com/r/FreeGameFindings/search.rss?q=flair:Tasks&restrict_sr=1&sort=new';
+      let rssUrl = 'https://old.reddit.com/r/FreeGameFindings/search.rss?q=flair:Tasks&restrict_sr=1&sort=new';
+      if (Platform.OS === 'web') {
+        rssUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(rssUrl)}`;
+      }
       // redditFetch handles 429 backoff – throws if rate-limited or unrecoverable
-      const response = await redditFetch(rssUrl);
+      const response = await fetch(rssUrl);
 
       const xml = await response.text();
       const entries = xml.split('<entry>');
