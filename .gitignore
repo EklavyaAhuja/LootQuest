@@ -1,0 +1,83 @@
+# ─── Internal Docs & Plans ──────────────────────────────────────────────────
+docs/
+
+# ─── Dependencies ────────────────────────────────────────────────────────────
+node_modules/
+
+# ─── Expo ─────────────────────────────────────────────────────────────────────
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# ─── EAS / Build ─────────────────────────────────────────────────────────────
+.vercel/
+
+# ─── Native build output ─────────────────────────────────────────────────────
+/android
+/ios
+*.orig.*
+*.apk
+*.aab
+
+# ─── Secrets & Credentials ───────────────────────────────────────────────────
+.env
+.env.local
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+# GoogleService-Info.plist  # iOS only — contains private key, keep secret
+GoogleService-Info.plist
+
+# ─── Archives & Backups ───────────────────────────────────────────────────────
+*.zip
+*.tar
+*.gz
+*.rar
+*.bak
+*.bak.*
+*.backup
+
+# ─── Metro ───────────────────────────────────────────────────────────────────
+.metro-health-check*
+
+# ─── TypeScript ──────────────────────────────────────────────────────────────
+*.tsbuildinfo
+
+# ─── Debug / Logs ────────────────────────────────────────────────────────────
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+
+# ─── OS noise ────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.pem
+
+# ─── IDE & Local Editor Tooling ───────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.user
+
+# ─── Scratch / Dev notes / Test scripts ───────────────────────────────────────
+fixes.txt
+design.md
+scratch/
+scratch_*.js
+test_*.js
+testMatch.js
+screenshots/*.html
+
+# ─── Nested backend service (has its own repo) ────────────────────────────────
+/fgf-backend
+
+.vercel
+.env*

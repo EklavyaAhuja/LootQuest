@@ -1,0 +1,12 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "exclude": [
+    "node_modules",
+    "scratch"
+  ]
+}

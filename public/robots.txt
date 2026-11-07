@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://claimr-app.vercel.app/sitemap.xml
+
