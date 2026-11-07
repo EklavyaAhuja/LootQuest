@@ -1,0 +1,12 @@
+node_modules
+.expo
+android
+ios
+fgf-backend
+.git
+.github
+*.apk
+*.aab
+*.jks
+*.keystore
+

@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Claimr · Free PC &amp; Console Games Radar &amp; Giveaway Alerts</title>
+    <meta name="description" content="Never miss a free game again. Claimr monitors 100% free PC and console giveaways across Steam, Epic Games, GOG, Prime Gaming, PlayStation, and Xbox with real-time alerts." />
+    <meta name="keywords" content="free games, free steam games, free epic games, game giveaway alerts, free games radar, free gog games, prime gaming free games, free playstation games, free xbox games, free dlc, steam giveaway notifications, claimr" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+    <link rel="canonical" href="https://claimr-app.vercel.app/" />
+    <link rel="sitemap" type="application/xml" title="Sitemap" href="/sitemap.xml" />
+    <meta name="google-site-verification" content="googleffd983e8a2cbc207" />
+
+    <!-- PWA & Apple iOS Tags -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="Claimr" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=claimr_v3" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/Icon_Latest.png?v=claimr_v3" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png?v=claimr_v3" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=claimr_v3" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=claimr_v3" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=claimr_v3" />
+    <link rel="shortcut icon" href="/Icon_Latest.png?v=claimr_v3" />
+
+    <!-- Open Graph & Social Cards -->
+    <meta property="og:site_name" content="Claimr" />
+    <meta property="og:title" content="Claimr · Free PC &amp; Console Games Radar &amp; Giveaway Alerts" />
+    <meta property="og:description" content="Track and claim 100% free games. Real-time alerts for Steam, Epic Games, GOG, Prime Gaming, PlayStation, and Xbox giveaways before they expire." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://claimr-app.vercel.app/" />
+    <meta property="og:image" content="https://claimr-app.vercel.app/og-image.png" />
+    <meta property="og:image:secure_url" content="https://claimr-app.vercel.app/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Claimr - Free Game Radar &amp; Giveaway Alerts" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter Cards -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Claimr · Free PC &amp; Console Games Radar &amp; Giveaway Alerts" />
+    <meta name="twitter:description" content="Never miss a free PC or console game. Real-time giveaway alerts for Steam, Epic Games, GOG, Prime Gaming, and more." />
+    <meta name="twitter:image" content="https://claimr-app.vercel.app/og-image.png" />
+    <meta name="twitter:image:alt" content="Claimr - Free Game Radar &amp; Giveaway Alerts" />
+
+    <!-- Schema.org Structured Data (JSON-LD) for Rich Google Snippets & FAQ -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebApplication",
+          "@id": "https://claimr-app.vercel.app/#webapp",
+          "name": "Claimr",
+          "url": "https://claimr-app.vercel.app/",
+          "description": "Free game radar and instant giveaway alert system tracking Steam, Epic Games, GOG, Prime Gaming, PlayStation, and Xbox.",
+          "applicationCategory": "GameApplication, UtilitiesApplication",
+          "operatingSystem": "Android, Windows, macOS, Linux, iOS",
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD",
+            "availability": "https://schema.org/InStock"
+          },
+          "featureList": [
+            "Instant giveaway push notifications",
+            "Steam, Epic Games Store, GOG, and Prime Gaming coverage",
+            "Countdown timers and expiry tracking",
+            "Claimed games library vault",
+            "Task vs 1-click direct claim classification"
+          ],
+          "screenshot": "https://claimr-app.vercel.app/og-image.png"
+        },
+        {
+          "@type": "Organization",
+          "@id": "https://claimr-app.vercel.app/#organization",
+          "name": "Claimr",
+          "url": "https://claimr-app.vercel.app/",
+          "logo": "https://claimr-app.vercel.app/Icon_Latest.png",
+          "sameAs": [
+            "https://github.com/EklavyaAhuja/LootQuest"
+          ]
+        },
+        {
+          "@type": "FAQPage",
+          "@id": "https://claimr-app.vercel.app/#faq",
+          "mainEntity": [
+            {
+              "@type": "Question",
+              "name": "What is Claimr?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Claimr is a free game radar and alert app that monitors verified giveaways and 100% discount promotions across Steam, Epic Games Store, GOG, Prime Gaming, PlayStation, Xbox, itch.io, and more."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Are the games on Claimr really free?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes. Claimr exclusively tracks legitimate, 100% free promotions and keys directly from official digital storefronts and verified publishers."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "How do I get alerts before giveaways expire?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "On Android, install the Claimr native app for instant push notifications. On Desktop and iOS, install Claimr as a Progressive Web App (PWA) to receive background Web Push alerts."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Which storefronts and platforms does Claimr support?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Claimr tracks Steam, Epic Games Store, GOG, Amazon Prime Gaming, itch.io, Ubisoft, PlayStation (PS4/PS5), Xbox, Stove, and Alienware Arena."
+              }
+            }
+          ]
+        }
+      ]
+    }
+    </script>
+
+    <!-- Google Fonts for Claimr (Unified Plus Jakarta Sans) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Unbounded:wght@700;800;900&display=swap" />
+
+    <style>
+      @font-face {
+        font-family: 'Unbounded-Bold';
+        src: url('/assets/fonts/Unbounded-Bold.ttf') format('truetype'),
+             url('https://fonts.gstatic.com/s/unbounded/v12/Y4-pY5mt8y7GMo6og6-f0j1V903e.woff2') format('woff2');
+        font-weight: 700;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Unbounded';
+        src: url('/assets/fonts/Unbounded-Bold.ttf') format('truetype'),
+             url('https://fonts.gstatic.com/s/unbounded/v12/Y4-pY5mt8y7GMo6og6-f0j1V903e.woff2') format('woff2');
+        font-weight: 700;
+        font-style: normal;
+        font-display: swap;
+      }
+    </style>
+
+    <!-- Service Worker Registration & Update Detection -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js').then(function(reg) {
+            reg.update();
+            if (reg.waiting) {
+              window.dispatchEvent(new CustomEvent('lq-sw-update-available'));
+            }
+            reg.addEventListener('updatefound', function() {
+              var newWorker = reg.installing;
+              if (newWorker) {
+                newWorker.addEventListener('statechange', function() {
+                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    window.dispatchEvent(new CustomEvent('lq-sw-update-available'));
+                  }
+                });
+              }
+            });
+          }).catch(function() {});
+        });
+      }
+    </script>
+
+    <style id="claimr-hallmark-styles">
+      :root {
+        --bg: #000000;
+        --tx: #EDEDEB;
+        --mu: #86868B;
+        --dim: #4D4D52;
+        --hl: #1C1C1E;
+        --bd: #3A3A3D;
+        --time: #FF8A5B;
+        --art: #0F0F10;
+        --r: 8px;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        background-color: var(--bg);
+        color: var(--tx);
+        font: 400 15px/1.5 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        overflow-x: hidden;
+        overscroll-behavior: none;
+        overscroll-behavior-y: none;
+        overscroll-behavior-x: none;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #root {
+        display: flex;
+        min-height: 100%;
+        width: 100%;
+        flex: 1;
+        background-color: var(--bg);
+        overscroll-behavior: none;
+        overscroll-behavior-y: none;
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+        padding-left: env(safe-area-inset-left);
+        padding-right: env(safe-area-inset-right);
+      }
+      a { color: inherit; text-decoration: none; }
+      :focus-visible { outline: 2px solid var(--tx); outline-offset: 3px; }
+      .s { font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 700; letter-spacing: -0.02em; }
+      .m { font: 600 11px/1.4 'Plus Jakarta Sans', sans-serif; text-transform: uppercase; letter-spacing: .08em; color: var(--mu); }
+      .wrap { max-width: 1200px; margin: 0 auto; padding: 0 32px; }
+      header { border-bottom: 1px solid var(--hl); position: sticky; top: 0; background: var(--bg); z-index: 50; }
+      .nav { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 72px; flex-wrap: wrap; }
+      .logo { cursor: pointer; display: flex; align-items: center; }
+      nav { display: flex; gap: 32px; flex-wrap: wrap; align-items: center; }
+      nav a { font: 600 12px 'Plus Jakarta Sans', sans-serif; text-transform: uppercase; letter-spacing: .08em; color: rgba(237, 237, 235, 0.72); padding: 6px 0; border-bottom: 2px solid transparent; cursor: pointer; }
+      nav a:hover { color: var(--tx); }
+      nav a.on { color: var(--tx); border-color: var(--tx); }
+      .btn { display: inline-block; background: var(--tx); color: #000; border: 0; border-radius: var(--r); padding: 12px 20px; font: 600 14px 'Plus Jakarta Sans', sans-serif; cursor: pointer; text-align: center; }
+      .btn.o { background: none; color: var(--mu); border: 1px solid var(--bd); }
+      .btn.g { background: none; color: var(--tx); border: 1px solid var(--bd); }
+      .tag { border: 0 !important; background: transparent !important; padding: 0 !important; font: 600 11px/1.3 'Plus Jakarta Sans', sans-serif !important; letter-spacing: .08em !important; text-transform: uppercase !important; color: var(--mu) !important; display: inline !important; }
+      .tag-sep { color: var(--dim); margin: 0 4px; user-select: none; display: inline-block; }
+      .ic { width: 16px; height: 16px; border: 1px solid var(--mu); border-radius: 3px; display: inline-grid; place-items: center; font: 700 9px 'Plus Jakarta Sans', sans-serif; }
+      .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .art { background: var(--art); border: 1px solid var(--hl); border-radius: var(--r); display: flex; align-items: center; justify-content: center; color: var(--mu); text-align: center; padding: 0; aspect-ratio: 16/9; width: 100%; overflow: hidden; position: relative; }
+      .old { font: 400 13px 'Plus Jakarta Sans', sans-serif; color: var(--mu); text-decoration: line-through; }
+      .free { font: 700 13px 'Plus Jakarta Sans', sans-serif; letter-spacing: .04em; }
+      .rule { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--hl); }
+      .sec { border-top: 1px solid var(--hl); padding: 32px 0 56px; }
+      .sec > .m { margin-bottom: 20px; display: block; }
+      .grid { display: grid; gap: 28px 24px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+      .card { display: block; min-width: 0; cursor: pointer; }
+      .card .t { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 19px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; margin: 12px 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .card .row { flex-wrap: nowrap; }
+      .card .row > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .hero { display: grid; grid-template-columns: 44% 56%; gap: 48px; padding: 32px 0 48px; }
+      .cd { display: flex; gap: 40px; margin: 24px 0; }
+      .cd b { display: block; font: 700 clamp(44px, 6vw, 84px)/1 'Plus Jakarta Sans', sans-serif; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
+      .hot b { color: var(--time); }
+      .bar { height: 2px; background: var(--hl); }
+      .bar i { display: block; height: 2px; background: var(--tx); }
+      .hot .bar i { background: var(--time); }
+      .big { font-size: 40px; line-height: 1; font-weight: 700; letter-spacing: -0.02em; }
+      .layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 48px; padding: 40px 0 56px; align-items: start; }
+      .tabs { display: flex; gap: 24px; overflow-x: auto; margin-bottom: 24px; }
+      .claimed { font: 600 13px 'Plus Jakarta Sans', sans-serif; color: var(--mu); }
+      .sw { width: 44px; height: 26px; border-radius: 13px; background: var(--hl); border: 1px solid var(--bd); position: relative; cursor: pointer; flex: none; padding: 0; }
+      .sw i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--mu); transition: left .15s ease; }
+      .sw[aria-checked=true] { background: var(--tx); }
+      .sw[aria-checked=true] i { left: 21px; background: #000; }
+      .inp { background: none; border: 0; border-bottom: 1px solid var(--bd); color: var(--tx); font: 400 16px 'Plus Jakarta Sans', sans-serif; padding: 8px 0; width: 100%; outline: none; }
+      .cols { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(360px, 1fr); gap: 48px; padding: 24px 0 56px; align-items: start; }
+      .cols > * { min-width: 0; }
+      footer { border-top: 1px solid var(--hl); padding: 28px 0; }
+      @media(max-width: 900px) {
+        .hero, .cols, .layout { grid-template-columns: 1fr; gap: 32px; }
+        .wrap { padding: 0 20px; }
+        .cd { gap: 24px; }
+      }
+    </style>
+
+    <!-- Vercel Web Analytics -->
+    <script>
+      window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+    </script>
+    <script defer src="/_vercel/insights/script.js"></script>
+  </head>
+
+  <body>
+    <noscript>
+      <div style="background-color: #000000; color: #EDEDEB; min-height: 100vh; padding: 40px 24px; font-family: 'Plus Jakarta Sans', sans-serif; max-width: 800px; margin: 0 auto; line-height: 1.6;">
+        <h1 style="font-size: 28px; margin-bottom: 12px; color: #EDEDEB;">Claimr · Free PC &amp; Console Games Radar &amp; Giveaway Alerts</h1>
+        <p style="font-size: 16px; color: #86868B; margin-bottom: 24px;">
+          Never miss a 100% free game again. Claimr monitors verified giveaways across Steam, Epic Games, GOG, Prime Gaming, PlayStation, and Xbox in real time.
+        </p>
+        <h2 style="font-size: 20px; color: #EDEDEB; margin-top: 32px;">Supported Platforms</h2>
+        <ul style="color: #a1a1aa; padding-left: 20px;">
+          <li>Steam (Games, DLCs, Free Weekends)</li>
+          <li>Epic Games Store (Weekly Free Games, Vault promotions)</li>
+          <li>GOG (DRM-Free Giveaways)</li>
+          <li>Amazon Prime Gaming (Monthly Claim Codes &amp; Games)</li>
+          <li>PlayStation &amp; Xbox (Promotional Freebies)</li>
+          <li>itch.io, Ubisoft, Stove, Alienware Arena</li>
+        </ul>
+        <h2 style="font-size: 20px; color: #EDEDEB; margin-top: 32px;">Key Features</h2>
+        <ul style="color: #a1a1aa; padding-left: 20px;">
+          <li>Instant push notifications before limited-time giveaways end</li>
+          <li>Accurate value calculation &amp; live countdown timers</li>
+          <li>Personal claim history &amp; game vault tracker</li>
+          <li>Direct 1-click claim links with zero piracy</li>
+        </ul>
+        <p style="margin-top: 32px; font-size: 14px; color: #71717a;">
+          Please enable JavaScript in your browser to launch the interactive Claimr web application and live radar.
+        </p>
+      </div>
+    </noscript>
+    <div id="root"></div>
+  </body>
+</html>

@@ -1,0 +1,87 @@
+{
+  "expo": {
+    "name": "Claimr",
+    "slug": "FreeGameFindings_App",
+    "scheme": "claimr",
+    "version": "1.3.0",
+    "runtimeVersion": "1.3.0",
+    "updates": {
+      "url": "https://u.expo.dev/95a4c213-070b-4462-8489-b8d0c433e77b",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "orientation": "portrait",
+    "icon": "./assets/app-icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#000000",
+    "splash": {
+      "image": "./assets/splash-image.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "androidStatusBar": {
+      "backgroundColor": "#000000",
+      "barStyle": "light-content",
+      "translucent": true
+    },
+
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.claimr.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.claimr.app",
+      "versionCode": 8,
+      "backgroundColor": "#000000",
+      "googleServicesFile": "./assets/google-services.json",
+      "adaptiveIcon": {
+        "backgroundColor": "#000000",
+        "foregroundImage": "./assets/adaptive-icon-foreground.png",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "./plugins/withNotificationToolsReplace",
+      "./plugins/withArm64Only",
+      "./plugins/withAndroidRootBlack",
+      "expo-system-ui",
+      [
+        "expo-navigation-bar",
+        {
+          "style": "dark",
+          "enforceContrast": false
+        }
+      ],
+      "expo-font",
+      "expo-secure-store",
+      "expo-web-browser",
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#EDEDEB"
+        }
+      ],
+      "expo-video",
+      "expo-image"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "95a4c213-070b-4462-8489-b8d0c433e77b"
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Non-app files
+.git/
+scratch/
+screenshots/
+public/
+dist/
+web-build/
+*.log
+test_feeder_parser.js
+fixes.txt
+
+# Native directories (let EAS prebuild with current SDK version and config plugins)
+android/
+ios/
+*.lock
